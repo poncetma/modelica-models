@@ -1,0 +1,4 @@
+model FPSE_Nonlinear_Majidniya_original
+equation
+
+end FPSE_Nonlinear_Majidniya_original;
