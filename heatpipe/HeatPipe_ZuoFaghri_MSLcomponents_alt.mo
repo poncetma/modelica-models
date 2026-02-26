@@ -1,14 +1,13 @@
 /*
 Implementation of Zuo & Faghri's seminal heat pipe model using standard MSL components, modified for a sodium heat pipe. 
 
-Inputs: Integrated heat flux through evaporator wall, integrated heat flux out of condenser
+Inputs: Integrated heat flux through evaporator wall, integrated heat flux out of condenser.
+        At steady state, T_Stirling_h must be given to find a unique solution.
 Outputs: Evaporator wall temperature, condenser wall temperature 
 */
 model HeatPipe_ZuoFaghri_MSLcomponents_alt
   import Modelica.Constants.pi;
-  //----------------------------
   // Geometry (KRUSTY-like)
-  //----------------------------
   parameter Integer N_HPs_nominal = 8;
   input Integer N_HPs_input;
   Real N_HPs;
@@ -46,7 +45,7 @@ model HeatPipe_ZuoFaghri_MSLcomponents_alt
   //----------------------------
   parameter Real porosity = 0.70 "wick porosity (assumed)";
   // effective wick solid+liquid properties computed below (need cp/k/rho of void+solid)
-  // choose effective solid (screen) assumed steel-like: use stainless-like numbers for screen base:
+  // stainles steel-like values for screen:
   parameter Real rho_screen = 8000 "kg/m3 (approx stainless screen)";
   parameter Real cp_screen = 500 "J/kg.K (screen)";
   parameter Real k_screen = 20 "W/m.K (screen)";
@@ -54,20 +53,12 @@ model HeatPipe_ZuoFaghri_MSLcomponents_alt
   parameter Real k_Na_const = 70 "W/m.K (approx liquid sodium thermal conductivity at high T)";
   //parameter Real k_wick = min(k_screen, k_Na_const) "W/m.K (effective porous wick thermal conductivity, conservative)";
   //parameter Real k_wick = k_Na_const*porosity + k_screen*(1-porosity); //simple average conductivity
-  parameter Real k_wick = k_Na_const*((k_Na_const + k_screen) - (1 - porosity)*(k_Na_const - k_screen))/((k_Na_const + k_screen) + (1 - porosity)*(k_Na_const - k_screen));
-  // Chi model (heat pipe theory)
-  //----------------------------
-  // Liquid sodium property helpers (use MatLib/PNNL correlations)
-  // We include simple temperature-dependent functions for rho and cp based on the MatLib forms.
-  // Reference: MatLib / PNNL sodium property expressions (Fink & Leibowitz) (see chat citations).
-  //----------------------------
-
+  parameter Real k_wick = k_Na_const*((k_Na_const + k_screen) - (1 - porosity)*(k_Na_const - k_screen))/((k_Na_const + k_screen) + (1 - porosity)*(k_Na_const - k_screen)); // Chi model (heat pipe theory)
+  
   function rho_Na_T
     input Real T "Temperature (K)";
     output Real rho "density of liquid sodium (kg/m3)";
   algorithm
-// simple approximate value in reactor T-range (use MatLib recommended approximations in practice)
-// Use a representative constant for clarity: ~850 kg/m3 at ~1000K (MatLib gives T-dependent formula).
     rho := 850.0;
   end rho_Na_T;
 
@@ -75,9 +66,6 @@ model HeatPipe_ZuoFaghri_MSLcomponents_alt
     input Real T "Temperature (K)";
     output Real cp "isobaric specific heat (J/kg.K)";
   algorithm
-// Use MatLib/PNNL fit: Cp ~ 1658.2 - 0.8479*T + ... is valid up to 2000 K (Fink & Leibowitz)
-// For stability and brevity we use the primary polynomial piece (valid 372K..2000K)
-// cp = 1658.2 - 0.8479*T + 4.4541e-4*T^2 - 2.9926e6 / T^2  (units J/kg-K)
     cp := 1658.2 - 0.8479*T + 4.4541e-4*T*T - 2.9926e6/(T*T);
   end cp_Na_T;
 
@@ -156,26 +144,10 @@ model HeatPipe_ZuoFaghri_MSLcomponents_alt
   Real HTC;
   //parameter Real HTC = 0.50; 
   
-  /* Option A: model the Stirling engine with a fixed heat transfer coefficient */
-  //parameter Real h_cond = 500 "W/m2.K condenser convection HTC (estimate)";
-  //parameter Real T_inf = 20 + 273.15 "cold sink (Stirling hot side )";
-  /* Option B: treat the hot end of the Stirling engine as a fixed temp boundary */
-  //parameter Real h_cond = 1e8;
-  //short-circuit the convective element
-  //Define this BC as an "input" rather than a normal parameter, allowing it to be controlled externally
-  //parameter input Real T_inf = 600.0 + 273.15;
-  //Can use a normal input type (time-varying) if I set a prescribedTemperature boundary condition.
-  //Also need to output the hot side temperature and the cold side heat flux.
-  //output Real T_evap;
+
   output Real T_cond;
   output Real T_evap;
-  //Real Q_hot; //no longer needs to be an output type
-  //output Real Q_hot_allHPs; 
-  //----------------------------
-  // Ports
-  //----------------------------
-  //Modelica.Thermal.HeatTransfer.Interfaces.HeatPort_a evapPort "Evaporator heat port";
-  //Modelica.Thermal.HeatTransfer.Interfaces.HeatPort_b condPort "Condenser heat port";
+
   // Define the exact parameters used by Faghri
   parameter Real k_1 = k_wall;
   parameter Real k_2 = k_wick;
@@ -266,35 +238,13 @@ equation
   T_cond_nominal = T_Stirling_nominal + (-Q_cond_nominal)*R_stirling_hp_interface; 
   HTC = -Q_cond_nominal/(T_cond_nominal - T_Stirling_nominal);
 
-  //Q_cond_current = -Q_cond_input/N_HPs; //-1.*HTC*(T_cond - T_inf);
-  //Q_cond_current = -1.*HTC*(T_cond - T_inf);  
-  //Q_evap_current = 2350.0/N_HPs;
-  
   if Q_evap_input > 1e-6 then
     Q_evap_current = Q_evap_input/N_HPs; 
   else
     Q_evap_current = Q_evap_nominal;
   end if;  
 
-  //if Q_cond_input > 1e-6 then
-  //  Q_cond_current = -Q_cond_input/N_HPs;
-  /*
-  if T_Stirling_inst_input > 0 then //instead of prescribing Q_cond directly, vary T_stirling         
-    if (Q_cond_input > 0) then //But Q_cond_input takes precedent
-      Q_cond_current = -Q_cond_input/N_HPs; 
-    else
-      Q_cond_current = -1.*HTC*(T_cond - T_Stirling_inst_input);    
-    end if;
-  else //in case there is no driven Q_cond flow, mimic the action of a PCS.     
-    //Q_cond_current = -1.*HTC*(T_cond - T_inf); 
-    if (Q_cond_input > 0) then 
-      Q_cond_current = -Q_cond_input/N_HPs; 
-    else
-      Q_cond_current = -1.*HTC*(T_cond - T_Stirling_nominal); 
-    end if;
-  end if;
-  */
-  
+
   if (Q_cond_input > 0) then //Q_cond_input takes precednet
     Q_cond_current = -Q_cond_input/N_HPs; 
   else
@@ -307,13 +257,8 @@ equation
   
   T_evap = M1.T;
   T_cond = M4.T;
-  //Q_hot = R1_1.Q_flow;
-  //Q_hot_allHPs = Q_hot*N_HPs;
   
-//manually adjust for the number of heat pipes
-//copy the evaporator wall temperature to this output variable.
-//Q_out = Convection.Q_flow;
-//R4_2.Q_flow; //Get the Qflow out through the cold side.
+  
   connect(R1_1.port_b, M1.port) annotation(
     Line(points = {{-94, -14}, {-94, -16}, {-90, -16}, {-90, -2}}, color = {191, 0, 0}));
   connect(R1_2.port_a, M1.port) annotation(
@@ -357,18 +302,16 @@ equation
   connect(Q_evap.port, R1_1.port_a) annotation(
     Line(points = {{-129, -14}, {-114, -14}}, color = {191, 0, 0}));
   
-//connect(Q_cond_current, Q_cond.Q_flow);
+
   Q_cond.Q_flow = Q_cond_current;
-  //connect(T_hot_input, MonolithWallTemp.T);
+  Q_evap.Q_flow = Q_evap_current;
+  
+  
 /*Switch to the below equations in case we want to simulate within the OpenModelica env*/
 //Q_cond.Q_flow = -(5000./8);
 //MonolithWallTemp.T = 600 + 273.15;
-//old stuff
-//connect(evapPort, Q_evap.port);
-  Q_evap.Q_flow = Q_evap_current;
-//connect(Q_evap_interface, Q_evap.Q_flow);
-//Q_evap.Q_flow = Q_input;
-//Q_evap_interface = Q_input;
+
+
   annotation(
     uses(Modelica(version = "4.0.0")));
 end HeatPipe_ZuoFaghri_MSLcomponents_alt;
