@@ -59,22 +59,14 @@ import Modelica.Constants.pi;
   input Real Q_loss_input;
   Real Q_loss "Heat lost through MLI [W]";
   Real P_integral; 
-  input Real P_integral_input "Instantaneous integral power [W]";
-  //Real q_flux_hp;
-  //input Real Q_hp_input "Q flow through heat pipe boundary [W]";
+  input Real P_integral_input "Instantaneous integral power [W]";  
   input Real T_outer_wall_input "Temperature of heat pipe wall [K]";
   
-  parameter Real w_contact = 0.015 "Effective contact width per heat pipe [m]";
-  // --- Calculated Operational Values ---
-  //parameter Real P_per_hp = P_integral / n_hp "Power per heat pipe [W]";
+  parameter Real w_contact = 0.015 "Effective contact width per heat pipe [m]";  
   parameter Real A_hp_eff = n_hp * w_contact * L "Total effective HP contact area [m2]";
-  //parameter Real q_flux_hp = P_integral / A_hp_eff "Flux at the HP interface [W/m2]";
-  Real q_gen[N] "Required Q''' [W/m3]";
-  //Define q_gen based on a prescribed radial profile
-  Real q_gen_prof[N];
+  Real q_gen[N] "Required Q''' [W/m3]";   
+  Real q_gen_prof[N]; //Define q_gen based on a prescribed radial profile
   
-  // --- Variables ---
-  //Real T[N](start=fill(800, N)) "Temperature at shell centers [K]";
   Real T[N] "Temperature at shell centers [K]";
   Real Q_flow[N+1] "Heat flow rate across shell faces [W]";
   Real V_shell[N] "Volume of each shell [m3]";
@@ -83,21 +75,13 @@ import Modelica.Constants.pi;
   output Real Q_evap_out "Heat flow out of heat pipe wall [W]";
   output Real T_mean "Volume-weighted mean temperature [K]";
 
-  // --- Geometry Constants ---
+  //--Nodalisation
   parameter Real dr = (r_outer - r_inner) / N;
   final parameter Real r_face[N+1] = {r_inner + (i-1)*dr for i in 1:N+1};
-  //final parameter Real r_face[N+1] = {sqrt(r_inner^2 + (i-1)*(r_outer^2 - r_inner^2)/N) for i in 1:N+1}; //equal volume spacing
-  //final parameter Real dr[N] = {r_face[i+1] - r_face[i] for i in 1:N};
+  
   
   Real power_profile_integral;
   Real verified_power_integral;
-
-  //Real HTC_loss; //model temp-dependent losses out of MLI? 
-  //Real T_ghost;
-  
-  //parameter Real contact_frac = A_hp_eff/(2.*pi*r_face[N+1]*L);
-  //Real Q_dirichlet;
-  //Real Q_rest;
   
 initial equation
   for i in 1:N loop 
@@ -110,20 +94,14 @@ equation
   else
     Q_loss = Q_loss_nominal_input;
   end if;  
-
-  //P_integral = P_total_nom; 
-  //P_integral = P_integral_input;   
+  
   if P_integral_input > 1e-6 then
     P_integral = P_integral_input;
   else
     P_integral = P_total_nom + Q_loss;
   end if;
-  
-  //q_flux_hp = P_total_nom/A_hp_eff; 
-  //q_flux_hp = Q_hp_input/A_hp_eff;  
 
   for i in 1:N loop
-    //q_gen[i] = P_integral / fuel_volume; //uniform heating
     //follow radial profile and renormalise to nominal integral power
     if i < 9./10.*N then
       q_gen_prof[i] = 1;
@@ -133,56 +111,37 @@ equation
     V_shell[i] = pi * (r_face[i+1]^2 - r_face[i]^2) * L;
   end for;   
   power_profile_integral = sum(q_gen_prof[i] * V_shell[i] for i in 1:N);
-
   
 
-  // 1. Heat Flows at Faces
+  
   Q_flow[1] = 0; // Inner Boundary: Adiabatic (Control Rod Hole) 
   
-  // 1. Boundary Condition Logic
   // The temperature at the evap wall is fixed, received from HP solver. 
-  
   if T_outer_wall_input > 1e-6 then
     T_outer_wall = T_outer_wall_input;
   else 
     T_outer_wall = T_HP_nominal;
   end if;
-  //Q_flow[N+1] = P_total_nom; 
-  //T_outer_wall = T_HP_nominal;
-  //T_outer_wall = T[N] - Q_flow[N+1]/A_hp_eff * (dr/2) / k;
   
-  // 2. Energy Balance for each Shell
-  //inner Q_flows --positive when heat flows towards +ve r (negative T gradient)
+  // Energy Balance for each Shell
+  // inner Q_flows is positive when heat flows towards positive r (negative T gradient)
   for i in 2:N loop
     Q_flow[i] = -k_correlation((T[i-1] + T[i])/2.) * (2 * pi * r_face[i] * L) * (T[i] - T[i-1]) / dr; 
-  end for;
-  //Q_flow[N+1] = -k * (2 * pi * r_face[N+1] * L) * (T_outer_wall - T[N]) / (dr/2); //half-dr due to cell-centredness
-  //T_outer_wall = T[N] - (Q_flow[N+1] / (2 * pi * r_face[N+1] * L)) * (dr/2) / k;
-  //Q_flow[N+1] = -k * (A_hp_eff) * (T_outer_wall - T[N]) / (dr/2); //half-dr due to cell-centredness
-  //Now there are two parallel heat flow paths at the outer wall. 
+  end for;  
   //Assume Q_loss is constant (true for small variation of outer wall temp)
   //Q_flow[N+1] = -k_correlation((T[N]+T_outer_wall)/2.) * (A_hp_eff) * (T_outer_wall - T[N]) / (dr[N]/2) + Q_loss; 
   
-  //NB: MUST use the actual interfacial area to have a consistent 2nd order scheme!
-  //This affects the solution but have shown that it's not a radical difference
+  // Outer boundary: MUST use the actual interfacial area to have a consistent 2nd order scheme!
+  // This affects the solution but have shown that it's not a radical difference
   Q_flow[N+1] = -k_correlation((T[N]+T_outer_wall)/2.) * (2*pi*r_face[N+1]*L) * (T_outer_wall - T[N]) / (dr/2);//+Q_loss; 
 
-  //Q_dirichlet = -k_correlation((T[N] + T_outer_wall)/2.) * (contact_frac * 2*pi*r_face[N+1]*L) * (T_outer_wall - T[N]) / (dr/2);
-  //Q_rest = 0; //losses
-  //Q_flow[N+1] = Q_dirichlet + Q_rest;
-  
-  // Linear extrapolation to ghost cell (boundary at face)
-  //T_ghost = 2*T_outer_wall - T[N]; //
-  // Conductive flux at outer face using full-cell gradient
-  //Q_flow[N+1] = -k_correlation((T[N] + T_ghost)/2.) * (2*pi*r_face[N+1]*L) * (T_ghost - T[N]) / dr;
-  
   for i in 1:N loop    
     q_gen[i] = q_gen_prof[i]/power_profile_integral*P_integral; //update q_gen
     rho_correlation(T[i]) * V_shell[i] * cp_correlation(T[i]) * der(T[i]) = Q_flow[i] - Q_flow[i+1] + q_gen[i] * V_shell[i];    
   end for;  
-    verified_power_integral = sum(q_gen[i] * V_shell[i] for i in 1:N);
+  verified_power_integral = sum(q_gen[i] * V_shell[i] for i in 1:N);
  
-
+  
   T_mean = sum(T[i] * V_shell[i] for i in 1:N) / fuel_volume;
   Q_evap_out = Q_flow[N+1] - Q_loss;
   
