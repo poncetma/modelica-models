@@ -228,9 +228,11 @@ equation
   end if;
 
   if Q_cond_nominal_input > 1e-6 then
-    Q_cond_nominal = -1.*Q_cond_nominal_input/N_HPs;
+    Q_cond_nominal = -1.*Q_cond_nominal_input/N_HPs; 
+    //Q_cond_nominal = -1.*Q_cond_nominal_input/N_HPs_nominal;
   else
     Q_cond_nominal = -2350.0/N_HPs;
+    //Q_cond_nominal = -2350.0/N_HPs_nominal;
   end if;  
   Q_evap_nominal = -1*Q_cond_nominal;  
   R_stirling_hp_interface = 165/(-Q_cond_nominal); //~145 C measured temperature drop from HP condenser to Stirling hot end
@@ -245,7 +247,7 @@ equation
   end if;  
 
 
-  if (Q_cond_input > 0) then //Q_cond_input takes precednet
+  if (Q_cond_input > 1e-6) then //Q_cond_input takes precedent
     Q_cond_current = -Q_cond_input/N_HPs; 
   else
     if T_Stirling_inst_input > 0 then //instead of prescribing Q_cond directly, vary T_stirling         
