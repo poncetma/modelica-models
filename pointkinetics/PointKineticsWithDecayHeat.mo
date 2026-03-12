@@ -6,13 +6,16 @@ This model uses the TRACE implementation (a power formulation, see TRACE V5 theo
 with input data suited for KRUSTY (fast-spectrum, U238 fission products) from the ANS Standard for Decay Heat (1979).
 
 Inputs: Fuel temperature (average, T_Fuel), external reactivity (rho_ext)
-Outputs: Total thermal power (P) 
+Outputs: Total thermal power (P_total), fission power (P_fiss), decay power (P_dec) 
 "
 input Real T_fuel_ref_input;
 input Real T_fuel_input "Average fuel temperature, obtained from external solver";
 input Real alpha_Tf_input; 
 input Real rho_ext_input "external reactivity, outside input";
 input Real P_0 "initial thermal power [W]";
+
+parameter Real t_exp_onset = 8.*3600 "time at which the transient began during the 28-h run of KRUSTY [s]";
+parameter Integer nearest_exp_index = findNearestIndex(exp_times, t_exp_onset);
 
 parameter Real alpha_Tf_default = -0.1844*0.01*Beta "fuel TRC, Poston et al"; 
 parameter Real T_fuel_ref_default = 1090 "reference temperature, from steady-state TH solve [K]"; //1091.173; //
@@ -22,6 +25,61 @@ constant Real Beta = 0.00688; //value directly from KRUSTY papers
 parameter Real betas[6] = {0.037, 0.211, 0.187, 0.407, 0.131, 0.027}*Beta;
 parameter Real lambdas[6] = {0.01273, 0.03175, 0.116, 0.3118, 1.399, 3.876}; //values from KRUSTY papers
 
+parameter Real E_f = 200.0 "Energy release per fission, U235 [MeV]";
+parameter Real lambdas_dh[23] = {
+2.214E+01,
+5.159E-01,
+1.959E-01,
+1.031E-01,
+3.366E-02,
+1.168E-02,
+3.587E-03,
+1.393E-03,
+6.263E-04,
+1.891E-04,
+5.499E-05,
+2.096E-05,
+1.001E-05,
+2.544E-06,
+6.636E-07,
+1.229E-07,
+2.721E-08,
+4.371E-09,
+7.578E-10,
+2.479E-10,
+2.238E-13,
+2.460E-14,
+1.570E-14
+} "Decay heat group decay constants for U235 [s^-1]"; 
+parameter Real EDs[23] = {
+6.506E-01,
+5.126E-01,
+2.438E-01,
+1.385E-01,
+5.544E-02,
+2.223E-02,
+3.309E-03,
+9.302E-04,
+8.094E-04,
+1.957E-04,
+3.254E-05,
+7.560E-06,
+2.523E-06,
+4.995E-07,
+1.853E-07,
+2.661E-08,
+2.240E-09,
+8.164E-12,
+8.780E-11,
+2.513E-14,
+3.218E-16,
+4.504E-17,
+7.479E-17
+}*decayheat_correction_factor "Decay power release per fission for U235 [MeV/s]";
+parameter Real decayheat_correction_factor = 1.035 "ad-hoc correction to account for fast fissions in U235, set to match reported ~5.75% decay heat fraction at the 8-hour mark of the 28-hour run (stated as being between 5.5% and 6%)";
+
+
+/*
 parameter Real E_f = 195.0 "Energy release per fission, U238 [MeV]"; 
 parameter Real lambdas_dh[23] = {
 3.29E+00,
@@ -73,12 +131,14 @@ parameter Real EDs[23] = {
 5.63E-17,
 7.16E-17
 } "Decay power release per fission for U238 [MeV/s]";
+*/
+
 parameter Real E_fracs[23] = EDs./lambdas_dh./E_f "Decay heat fraction [-]";
 
 parameter Real rho_0 = 0.0 "initial reactivity"; 
 
 //hardcoded experimental data from KRUSTY (for power history)
-constant Real exp_times[138] = {
+parameter Real exp_times[138] = {
 0,
 1116,
 1435,
@@ -360,9 +420,6 @@ constant Real exp_powers[138] = {
 0
 } "linearised experimental data, powers [W]";
 
-//input Real t_exp_onset "time at which the transient began during the 28-h run of KRUSTY [s]";
-parameter Real t_exp_onset = 8*3600; //10.02*3600 "time at which the transient began during the 28-h run of KRUSTY [s]"; 
-parameter Integer nearest_exp_index = findNearestIndex(exp_times, t_exp_onset);
 
 Real[nearest_exp_index] fissionpower_history = Modelica.Math.Vectors.reverse(exp_powers[1:nearest_exp_index]);
 Real[nearest_exp_index] time_history = { exp_times[nearest_exp_index] - t for t in Modelica.Math.Vectors.reverse(exp_times[1:nearest_exp_index])} ;
@@ -478,46 +535,32 @@ Real T_fuel_ref;
 
 Real Cs[6] "instaneous group-wise precursor power [W] "; 
 Real Hs[23] "decay heat precursor energy [J]";
-//Real Cs_0[6];
-//Real Hs_0[23];
-//Real decay_heat_fraction;
+Real Decay_heat_fraction;
 
 output Real P_fiss "instantaneous fission power"; 
 output Real P_dec "instantaneous decay heat power";
 output Real P_tot "total instantaneous thermal power";
 
-/*
 initial equation
 
-if P_0 > 0 then  
-  P_tot = P_0;
-else  
-  P_tot = 5000.0;
-end if; 
-
-
-if (t_exp_onset < 0) then //any negative input will trigger the infinite power history IC
-  betas/Lambda*P_fiss = lambdas.*Cs;
-  Es*P_fiss = lambdas_dh.*Hs ;
-else
-  
-  (Cs, Hs) = computeICsFromPowerHistory(powerhist_times,powerhist_powers,lambdas, betas, Lambda, lambdas_dh,Es);   
-  
-end if;
-*/
-
 /*
-initial algorithm
-  (Cs, Hs) := computeICsFromPowerHistory(powerhist_times,powerhist_powers,lambdas, betas, Lambda, lambdas_dh,Es);   
-  P_fiss := 0;
+It's currently not possible to set an externally defined input for the time history cutoff, since this would require resizing of the history arrays 
+during simulation---not allowed by Modelica. Normally, an FMU should allow the parameters to be set, which would be fine, but have seen
+that this doesn't work with OpenModelica. The solution is then to recompile an FMU for each power history case. 
 */
 
-  
-initial equation
-//  (time_history, fissionpower_history) = genFissionPowerHistory(exp_times, exp_powers, nearest_exp_index);
-
+if t_exp_onset > 0 then
   (Cs, Hs) = computeICsFromPowerHistory(time_history, fissionpower_history, lambdas, betas, Lambda, lambdas_dh, E_fracs);   
   P_fiss = exp_powers[nearest_exp_index]; //The fission power has to match the chosen point in the history
+else //take a negative parameter input as implying infinite power history
+  betas/Lambda*P_fiss = lambdas.*Cs;
+  E_fracs*P_fiss = lambdas_dh.*Hs ;  
+  if P_0 > 0 then 
+    P_tot = P_0;
+  else 
+    P_tot = 3000.0;
+  end if;
+end if;
   
 
 equation
@@ -557,7 +600,12 @@ der(Cs) = betas/Lambda*P_fiss - lambdas.*Cs;
 der(Hs) = E_fracs*P_fiss - lambdas_dh.*Hs;
 P_dec = sum(lambdas_dh.*Hs);
 P_tot = P_fiss + P_dec;
-//decay_heat_fraction = P_dec/P_tot;
+
+if P_tot > 1e-6 then 
+  Decay_heat_fraction = P_dec/P_tot;
+else
+  Decay_heat_fraction = 0.;
+end if;
 
 
 end PointKineticsWithDecayHeat;
