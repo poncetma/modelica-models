@@ -1,12 +1,18 @@
 model PointKineticsWithDecayHeat
 "
+Description:
 Point kinetics with decay heat tracking, based on effective precursor groupings (similar to DNPs).
 This is the same general approach used in FRINK, though the exact implementation there is not published. 
-This model uses the TRACE implementation (a power formulation, see TRACE V5 theory manual) 
-with input data suited for KRUSTY (fast-spectrum, U238 fission products) from the ANS Standard for Decay Heat (1979).
+This model uses the TRACE implementation (see TRACE V5 theory manual) with input data 
+from the ANS Standard for Decay Heat (1979). The U235 data is used with a slight correction factor.
 
 Inputs: Fuel temperature (average, T_Fuel), external reactivity (rho_ext)
 Outputs: Total thermal power (P_total), fission power (P_fiss), decay power (P_dec) 
+
+Notes: If using power history from the 28-h run of KRUSTY, the onset point of the desired transient must
+be provided as a parameter. It does not work with a an 'input' type. Thus if exporting to an FMU, it must be 
+recompiled for each power history case.
+
 "
 input Real T_fuel_ref_input;
 input Real T_fuel_input "Average fuel temperature, obtained from external solver";
@@ -77,7 +83,6 @@ parameter Real EDs[23] = {
 7.479E-17
 }*decayheat_correction_factor "Decay power release per fission for U235 [MeV/s]";
 parameter Real decayheat_correction_factor = 1.035 "ad-hoc correction to account for fast fissions in U235, set to match reported ~5.75% decay heat fraction at the 8-hour mark of the 28-hour run (stated as being between 5.5% and 6%)";
-
 
 /*
 parameter Real E_f = 195.0 "Energy release per fission, U238 [MeV]"; 
