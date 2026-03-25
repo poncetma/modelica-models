@@ -1,11 +1,11 @@
 model HeatPipeWithVapourCore
 /*
-This model, inspired by Zhang et al., uses a non-linear resistance representing the vapour core of the KRUSTY sodium heat pipe. 
-This resistance mimics the effect of the heat pipe "activating" during start-up, which is a function of the vapour pressure and temperature. 
-The model only applies this resistance when the transition from rarefied flow to continuum flow occurs, otherwise
-it is kept at a constant high value.  
+This model, inspired by Zhang et al. ("Comparative study of two quick-analysis models for frozen startup of high-temperature heat pipes"),
+uses a dynamic thermal resistance to represent the vapour core of the KRUSTY sodium heat pipe. 
+This resistance mimics the effect of the heat pipe "activating" during start-up, which is a function of the vapour pressure and temperature. This function is highly non-linear due to the sharp rarefied->continuous flow transition occuring at the transition temeprature. This temperature
+is computed from the critical Knudsen number based on kinetic theory. 
 
-The effect of this is that, during cold/frozen start-up, 
+The effect of this is that, during cold/frozen start-up, there is initially almost no heat transfer to the condenser 
 
 The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired model.
 */
@@ -87,7 +87,7 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   parameter Real V_wall_a = pi*(ro_wall^2 - ri_wall^2)*La;
   parameter Real V_wick = pi*(ro_wick^2 - ri_wick^2)*(Le); //KRUSTY heat pipes were only wicked in the evaporator (thermosiphon)
   parameter Real V_liquid = V_wick*porosity; //crude estimate, assume the wick is exactly saturated with sodium
-  parameter Real V_core = pi*ri_wick^2.*(Le + La + Lc); 
+  parameter Real V_vcore = pi*ri_wick^2.*(Le + La + Lc) "volume of the vapour core [m^3]"; 
 
   parameter Real C_evap_wall = rho_wall * V_wall_e * cp_wall "evaporator wall capacitance [J/K]";
   parameter Real C_cond_wall = rho_wall * V_wall_c * cp_wall "condenser wall capacitance [J/K]";
@@ -159,11 +159,25 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   Real T_evap (start=300., fixed = false) "evaporator wall temp [K]";
   Real T_wick (start=300., fixed = false) "wick temp (evap) [K]";
   Real T_vap (start=300., fixed = false) "vapour temperature [K]";
-  Real T_adiab (start=300, fixed = false) "adiabatic wall temp [K]";
+  //Real T_adiab (start=300, fixed = false) "adiabatic wall temp [K]";
   Real T_cond (start=300., fixed = false) "condenser wall temp [K]";  
   //Real pv_tr "vapour pressure of sodium at transition temperature [Pa]";
   Real p_v "vapour pressure at instantaneous temperature [Pa]";
   Real rho_v "instantaneous vapour density [kg/m3]";  
+  
+  //----------------------------
+  // Toy model of the core -- assume single lump, i.e. no internal temperature gradient
+  //----------------------------  
+  parameter Real rho_monolith = 17110;
+  parameter Real cp_monolith = 189;
+  parameter Real V_monolith = 0.00186454 "monolith volume, from mesh [m^3]"; 
+  parameter Real C_monolith = rho_monolith*cp_monolith*V_monolith;  
+  Real T_monolith (start=300., fixed=false); 
+  parameter Real w_contact = 0.015;
+  parameter Real A_contact = w_contact*Le;
+  parameter Real L_mono_evap = 0.01; //take ~half the monolith thickness as an approx.
+  parameter Real k_monolith = 37.5; 
+  parameter Real R_mono_evap = L_mono_evap/A_contact/k_monolith;
   
   //----------------------------
   // Transition values
@@ -188,8 +202,11 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   Real Q_ew "evaporator->wick";
   Real Q_wv "wick->vapour";
   Real Q_vc "vapour->condenser";
+  /*
   Real Q_ea "evaporator->adiabatic section"; //path through wall
   Real Q_ac "adiabatic section-> condenser";
+  */
+  Real Q_ec "evaporaotr->condenser";
   Real R_vc "combined thermal resistance from vapour to condenser"; 
   
   //----------------------------
@@ -200,27 +217,15 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   Real Q_evap "heat addition rate to evaporator [W]";
   Real Q_cond "heat removal rate from condenser [W]";
   
+  //Give the option of accounting for heat pipe activation or not 
+  parameter Boolean MODEL_ACTIVATION = true;
+  
   //----------------------------
   // Outputs / signals
   //----------------------------
   //Boolean HP_activated;
 
 equation
-  if Q_evap_input > 0 then 
-    Q_evap = Q_evap_input;
-  else 
-    Q_evap = 2350/8.;
-  end if;
-  
-  if Q_cond_input > 0 then 
-    Q_cond = Q_cond_input;
-  else 
-    //Q_cond = 2350/8.;
-    //Q_cond = HTC*(T_cond - T_stirling_nominal);    
-    Q_cond = max(0, HTC*(T_cond - T_stirling_nominal));  //avoid adding heat to the heat pipe via the condenser
-    
-  end if;
-
   cp_v = cp_v_correlation(T_vap);
   
   T_tr = ( sqrt(2)*pi*d_v^2.*pv_correlation(T_tr)*di_wick )/( 1.051*kappa )*Knuds_crit; //non-linear equation solved automatically with initial guess
@@ -266,7 +271,12 @@ equation
   //R_vapour_ax = 1/G_vapour_ax;
   
   //R_vapour_ax = (1 - S)*R_high + S*(R_vapour_ax_tr); //the resistance at the transition temp is low enough that it may as well be used throughout.
-  R_vapour_ax = (1 - S)*R_high + S*(R_vapour_ax_posttransition); 
+  
+  if MODEL_ACTIVATION then 
+    R_vapour_ax = (1 - S)*R_high + S*(R_vapour_ax_posttransition); 
+  else 
+    R_vapour_ax = 1e-6; //stick to some arbitrarily low resistance (short-circuit), reverting to Zuo-Faghri. 
+  end if;
   
   
   
@@ -284,6 +294,24 @@ equation
   //----------------------------
   // Heat transfer relations
   //----------------------------
+  
+  if Q_evap_input > 0 then 
+    Q_evap = Q_evap_input;
+  else 
+    //Q_evap = 2350/8.;
+    
+    // Core monolith -> evaporator
+    Q_evap = (T_monolith - T_evap)/R_mono_evap; 
+  end if;
+  
+  if Q_cond_input > 0 then 
+    Q_cond = Q_cond_input;
+  else 
+    //Q_cond = 2350/8.;
+    //Q_cond = HTC*(T_cond - T_stirling_nominal);    
+    Q_cond = max(0, HTC*(T_cond - T_stirling_nominal));  //avoid adding heat to the heat pipe via the condenser    
+  end if;
+  
   // Evaporator->wick
   Q_ew  = (T_evap - T_wick) / R_evap_radial;
 
@@ -296,29 +324,42 @@ equation
   //Q_vc = (T_vap - T_cond) / (R_cond_radial + R_vapour_ax);
   
   // Evaporator->adiabatic section
-  Q_ea = (T_evap - T_adiab) / (R_wall_axial/2.); 
+  //Q_ea = (T_evap - T_adiab) / (R_wall_axial/2.); 
   
   // Adiabatic section->condenser
-  Q_ac = (T_adiab - T_cond) / (R_wall_axial/2.);
+  //Q_ac = (T_adiab - T_cond) / (R_wall_axial/2.);
+  
+  // Evaporator->condenser
+  Q_ec = (T_evap - T_cond) / R_wall_axial;
 
   //----------------------------
   // Energy balances
   //----------------------------
+  
+  // Core monolith
+  C_monolith * der(T_monolith) = 2350 - 8*Q_evap;
+  
   // Evaporator
-  C_evap_wall * der(T_evap) = Q_evap - Q_ew - Q_ea;
+  //C_evap_wall * der(T_evap) = Q_evap - Q_ew - Q_ea;
+  
+  // Evaporator + condenser
+  C_evap_wall * der(T_evap) = Q_evap - Q_ew - Q_ec;
 
   // Wick
   C_wick * der(T_wick) = Q_ew - Q_wv; //Neglecting axial conductance in the wick
 
   // Vapor
-  C_vapour = rho_v*cp_v*V_core; //Update vapour capacitance based on density (rarefied/continuous state)
+  C_vapour = rho_v*cp_v*V_vcore; //Update vapour capacitance based on density (rarefied/continuous state)
   C_vapour * der(T_vap) = Q_wv - Q_vc;
 
   // Adiabatic section
-  C_adiab_wall * der(T_adiab) = Q_ea - Q_ac;
+  //Instead of explicitly solving for the adiabatic wall temperature, give its thermal mass to the condenser  
+  //C_adiab_wall * der(T_adiab) = Q_ea - Q_ac;
   
   // Condenser
-  C_cond_wall * der(T_cond) = Q_vc + Q_ac - Q_cond;
+  //C_cond_wall * der(T_cond) = Q_vc + Q_ac - Q_cond;
+  
+  (C_cond_wall + C_adiab_wall)* der(T_cond) = Q_vc + Q_ec - Q_cond;
 
 
 end HeatPipeWithVapourCore;
