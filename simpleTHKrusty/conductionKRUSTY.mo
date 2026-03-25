@@ -1,14 +1,20 @@
-model SimpleTHKRUSTY_Lossy_nonuniformq
+model conductionKRUSTY
 /*
  Control-volume-based implementation of 1D heat conduction in KRUSTY with a uniform source. 
  Currently based on Cartesian coordinates.
- This version includes fixed thermal losses out of the core (heat not going through the heat pipes).
+ This version includes implicitly accounts thermal losses out of the core (heat not going through the heat pipes).
  
- Inputs: integral power (heat deposition rate from fission + decay heat), T_wall
- Outputs: HP wall heat flux, T_avg
+ Inputs: total integral power (heat deposition rate from fission + decay heat), evaporator wall temperature, heat loss rate 
+ Outputs: HP wall heat flux, Core average temperature
 */
 import Modelica.Constants.pi;
+  //input Real Q_loss_nominal_input;
+  input Real Q_loss_input;
+  input Real P_integral_input "Instantaneous integral power [W]";  
+  input Real T_outer_wall_input "Temperature of heat pipe wall [K]";
 
+  parameter Real Q_loss_nominal = 350.0;
+  
   // --- Physical Parameters (KRUSTY U-10Mo) ---
   final constant Integer N = 65 "Number of radial shells"; //tested up to 500
   parameter Real r_inner = 0.02 "Inner fuel radius [m]";  
@@ -22,8 +28,7 @@ import Modelica.Constants.pi;
     output Real cp "isobaric specific heat (J/kg.K)";
     protected Real T_celcius_local;
   algorithm
-    T_celcius_local := T_local - 273.15;    
-    //cp := (0.00007333333*(1091.45-273.5) + 0.134666667)*1000; //own correlation from Burkes data 
+    T_celcius_local := T_local - 273.15;        
     cp := (0.00007333333*(T_celcius_local) + 0.134666667)*1000; //own correlation from Burkes data 
     //cp := 189;
   end cp_correlation;
@@ -44,21 +49,19 @@ import Modelica.Constants.pi;
     protected Real T_celcius_local;
   algorithm
     T_celcius_local := T_local - 273.15;        
-    rho := (17.15 - (8.63E-4)*(T_celcius_local + 20.))*1000.0; //in kg/m3
-    //rho := (17.15 - 8.63E-4*((1091.45-273.25) + 20.))*1000.0; //in kg/m3
+    rho := (17.15 - (8.63E-4)*(T_celcius_local + 20.))*1000.0; //in kg/m3    
     //rho := 17110; //Room temp value is actually 17320, 98.5% of theoretical 17580    
   end rho_correlation;
   
   // --- Heat Pipe / Boundary Parameters ---
   parameter Real T_HP_nominal = 1073.3074676166252 "Fixed HP temperature for steady-state [K]"; 
   parameter Integer n_hp = 8 "Number of heat pipes";
-  parameter Real P_total_nom = 2350.0  "Nominal total thermal power [W]";
-  input Real Q_loss_nominal_input;
-  input Real Q_loss_input;
+  
+  //parameter Real P_total_nom = 2350.0  "Nominal total thermal power [W]";
+  parameter Real P_total_nom = 2872.34 "Nominal total thermal power before subtracting far-field heating and thermal losses [W]";
+  
   Real Q_loss "Heat lost through MLI [W]";
   Real P_integral; 
-  input Real P_integral_input "Instantaneous integral power [W]";  
-  input Real T_outer_wall_input "Temperature of heat pipe wall [K]";
   
   parameter Real w_contact = 0.015 "Effective contact width per heat pipe [m]";  
   parameter Real A_hp_eff = n_hp * w_contact * L "Total effective HP contact area [m2]";
@@ -70,16 +73,18 @@ import Modelica.Constants.pi;
   Real V_shell[N] "Volume of each shell [m3]";
   
   Real T_outer_wall "Temperature at the heat pipe interface [K]";
-  output Real Q_evap_out "Heat flow out of heat pipe wall [W]";
-  output Real T_mean "Volume-weighted mean temperature [K]";
 
   //--Nodalisation
   parameter Real dr = (r_outer - r_inner) / N;
-  final parameter Real r_face[N+1] = {r_inner + (i-1)*dr for i in 1:N+1};
-  
+  final parameter Real r_face[N+1] = {r_inner + (i-1)*dr for i in 1:N+1};  
   
   Real power_profile_integral;
   Real verified_power_integral;
+
+  output Real Q_evap_out "Heat flow out of heat pipe wall [W]";
+  output Real T_mean "Volume-weighted mean temperature [K]";
+
+  parameter Real recoverable_power_fraction = 0.94; //near-field heating fraction as per Poston et al
   
 initial equation
   for i in 1:N loop 
@@ -90,13 +95,14 @@ equation
   if Q_loss_input > 1e-6 then 
     Q_loss = Q_loss_input;
   else
-    Q_loss = Q_loss_nominal_input;
-  end if;  
+    Q_loss = Q_loss_nominal;
+  end if;    
   
+  //P_integral is the actual thermal power to compute the temperature field without explicitly modelling thermal loss 
   if P_integral_input > 1e-6 then
-    P_integral = P_integral_input;
+    P_integral = P_integral_input*recoverable_power_fraction - Q_loss;
   else
-    P_integral = P_total_nom + Q_loss;
+    P_integral = P_total_nom*recoverable_power_fraction - Q_loss;
   end if;
 
   for i in 1:N loop
@@ -130,7 +136,7 @@ equation
   
   // Outer boundary: MUST use the actual interfacial area to have a consistent 2nd order scheme!
   // This affects the solution but have shown that it's not a radical difference
-  Q_flow[N+1] = -k_correlation((T[N]+T_outer_wall)/2.) * (2*pi*r_face[N+1]*L) * (T_outer_wall - T[N]) / (dr/2);//+Q_loss; 
+  Q_flow[N+1] = -k_correlation((T[N]+T_outer_wall)/2.) * (2*pi*r_face[N+1]*L) * (T_outer_wall - T[N]) / (dr/2); //+Q_loss; 
 
   for i in 1:N loop    
     q_gen[i] = q_gen_prof[i]/power_profile_integral*P_integral; //update q_gen
@@ -140,7 +146,8 @@ equation
  
   
   T_mean = sum(T[i] * V_shell[i] for i in 1:N) / fuel_volume;
-  Q_evap_out = Q_flow[N+1] - Q_loss;
+  //Q_evap_out = Q_flow[N+1] - Q_loss;
+  Q_evap_out = Q_flow[N+1]; //do not model the loss explicitly
   
   annotation(uses(Modelica(version="4.0.0")));
-end SimpleTHKRUSTY_Lossy_nonuniformq;
+end conductionKRUSTY;

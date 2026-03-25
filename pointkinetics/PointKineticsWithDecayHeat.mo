@@ -7,7 +7,7 @@ This model uses the TRACE implementation (see TRACE V5 theory manual) with input
 from the ANS Standard for Decay Heat (1979). The U235 data is used with a slight correction factor.
 
 Inputs: Fuel temperature (average, T_Fuel), external reactivity (rho_ext)
-Outputs: Total thermal power (P_total), fission power (P_fiss), decay power (P_dec) 
+Outputs: Total thermal power (P_tot), fission power (P_fiss), decay power (P_dec) 
 
 Notes: If using power history from the 28-h run of KRUSTY, the onset point of the desired transient must
 be provided as a parameter. It does not work with a an 'input' type. Thus if exporting to an FMU, it must be 
@@ -32,7 +32,7 @@ parameter Real betas[6] = {0.037, 0.211, 0.187, 0.407, 0.131, 0.027}*Beta;
 parameter Real lambdas[6] = {0.01273, 0.03175, 0.116, 0.3118, 1.399, 3.876}; //values from KRUSTY papers
 
 parameter Real E_f = 200.0 "Energy release per fission, U235 [MeV]";
-parameter Real lambdas_dh[23] = {
+final constant Real lambdas_dh[23] = {
 2.214E+01,
 5.159E-01,
 1.959E-01,
@@ -57,7 +57,7 @@ parameter Real lambdas_dh[23] = {
 2.460E-14,
 1.570E-14
 } "Decay heat group decay constants for U235 [s^-1]"; 
-parameter Real EDs[23] = {
+final constant Real EDs[23] = {
 6.506E-01,
 5.126E-01,
 2.438E-01,
@@ -82,7 +82,7 @@ parameter Real EDs[23] = {
 4.504E-17,
 7.479E-17
 }*decayheat_correction_factor "Decay power release per fission for U235 [MeV/s]";
-parameter Real decayheat_correction_factor = 1.035 "ad-hoc correction to account for fast fissions in U235, set to match reported ~5.75% decay heat fraction at the 8-hour mark of the 28-hour run (stated as being between 5.5% and 6%)";
+final constant Real decayheat_correction_factor = 1.0 "ad-hoc correction to account for fast fissions in U235, set to match reported decay heat fraction at the 8-hour mark of the 28-hour run (stated as being between 5.5% and 6%), but then estimated as 150 W";
 
 /*
 parameter Real E_f = 195.0 "Energy release per fission, U238 [MeV]"; 
@@ -143,7 +143,7 @@ parameter Real E_fracs[23] = EDs./lambdas_dh./E_f "Decay heat fraction [-]";
 parameter Real rho_0 = 0.0 "initial reactivity"; 
 
 //hardcoded experimental data from KRUSTY (for power history)
-parameter Real exp_times[138] = {
+final constant Real exp_times[138] = {
 0,
 1116,
 1435,
@@ -284,7 +284,7 @@ parameter Real exp_times[138] = {
 100880
 } "linearised experimental data, times [s]";
 
-constant Real exp_powers[138] = {
+final constant Real exp_powers[138] = {
 0,
 0,
 3675,
@@ -425,9 +425,13 @@ constant Real exp_powers[138] = {
 0
 } "linearised experimental data, powers [W]";
 
-
+/*
 Real[nearest_exp_index] fissionpower_history = Modelica.Math.Vectors.reverse(exp_powers[1:nearest_exp_index]);
 Real[nearest_exp_index] time_history = { exp_times[nearest_exp_index] - t for t in Modelica.Math.Vectors.reverse(exp_times[1:nearest_exp_index])} ;
+*/
+
+parameter Real fissionpower_history[28] = Modelica.Math.Vectors.reverse(exp_powers[1:28]);
+parameter Real time_history[28] = { exp_times[28] - t for t in Modelica.Math.Vectors.reverse(exp_times[1:28])} ;
 
 /*
   This correlation gives the integral reactivity feedback (relative to *operating* (nominal) temp).
@@ -557,6 +561,7 @@ that this doesn't work with OpenModelica. The solution is then to recompile an F
 if t_exp_onset > 0 then
   (Cs, Hs) = computeICsFromPowerHistory(time_history, fissionpower_history, lambdas, betas, Lambda, lambdas_dh, E_fracs);   
   P_fiss = exp_powers[nearest_exp_index]; //The fission power has to match the chosen point in the history
+ 
 else //take a negative parameter input as implying infinite power history
   betas/Lambda*P_fiss = lambdas.*Cs;
   E_fracs*P_fiss = lambdas_dh.*Hs ;  
@@ -569,6 +574,7 @@ end if;
   
 
 equation
+
 
 if T_fuel_ref_input > 1e-6 then
   T_fuel_ref = T_fuel_ref_input;
@@ -586,14 +592,8 @@ end if;
 
 if rho_ext_input > 0 then
   rho_ext = rho_ext_input;
-else //rho_ext = 0.0;
-  if time < 100 then
-    rho_ext = 0.0;
-    //rho_ext= min(100, time)*1e-5 ;
-  else
-    rho_ext = 0.0;
-  end if;
-  
+else 
+  rho_ext = 0.0;
 end if;
 
 rho_fb = alpha_Tf*(T_fuel - T_fuel_ref); 
@@ -606,11 +606,8 @@ der(Hs) = E_fracs*P_fiss - lambdas_dh.*Hs;
 P_dec = sum(lambdas_dh.*Hs);
 P_tot = P_fiss + P_dec;
 
-if P_tot > 1e-6 then 
-  Decay_heat_fraction = P_dec/P_tot;
-else
-  Decay_heat_fraction = 0.;
-end if;
+Decay_heat_fraction = P_dec/min(1, P_tot);
+
 
 
 end PointKineticsWithDecayHeat;
