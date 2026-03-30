@@ -5,14 +5,15 @@ uses a dynamic thermal resistance to represent the vapour core of the KRUSTY sod
 This resistance mimics the effect of the heat pipe "activating" during start-up, which is a function of the vapour pressure and temperature. This function is highly non-linear due to the sharp rarefied->continuous flow transition occuring at the transition temeprature. This temperature
 is computed from the critical Knudsen number based on kinetic theory. 
 
-The effect of this is that, during cold/frozen start-up, there is initially almost no heat transfer to the condenser 
-
+The effect of this is that, during cold/frozen start-up, there is initially almost no heat transfer to the condenser.
 The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired model.
+
+Note that the melting phase of start-up is neglected as the total enthalpy of fusion is negligible, as also shown here. 
 */
   import Modelica.Constants.pi;
 
   //----------------------------
-  // Geometry (KRUSTY-like)
+  // Geometry (KRUSTY)
   //----------------------------
   parameter Real Le = 0.25 "evaporator length [m]"; 
   parameter Real Lc = 0.10 "condenser length [m]"; 
@@ -33,7 +34,7 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   
   parameter Real r_vapour_eff = sqrt(V_vcore/(Le + La + Lc)/pi); 
   //----------------------------
-  // Material properties (approximate/effective)
+  // Material properties 
   //----------------------------
   
   // Wall
@@ -66,7 +67,7 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
  
   parameter Real M_g = 0.02299 "molar mass of monatomic sodium [kg/mol]";
   parameter Real R_g = 8.31446/M_g "specific gas constant [J/kg/K]";
-  parameter Real mu_v = 2.872E-5 "dynamic viscosity of monatomic sodium vapour [Pa*s]. Source: https://scispace.com/pdf/thermophysical-properties-of-sodium-2v306hkn25.pdf"; 
+   
   parameter Real h_lv = 4237E3 "latent heat of vapourisation [J/kg]";
   parameter Real h_sl = 113E3 "latent heat of fusion [J/kg]";
   
@@ -75,12 +76,12 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   parameter Real rho_l_thresh =  rho_l_correlation(T_melt) "liquid sodium density at melting point";
   parameter Real H_thresh_melt = rho_l_thresh*cp_l_thresh*T_melt*V_liquid "internal enthalpy (energy) of sodium at the melting point [J]"; 
   
-  parameter Real H_melt_total = h_sl*rho_l_thresh*V_liquid;
+  parameter Real m_melt_total = rho_l_thresh*V_liquid;
+  parameter Real H_melt_total = h_sl*m_melt_total;
   parameter Real eq_temp_rise = H_melt_total/cp_l_thresh;
   
   Real C_vapour "vapour capacitance, a function of instantaneous density/concentration [J/K]"; 
-  Real H_internal_l;
-
+  
   //----------------------------
   // Volumes / capacitances
   //----------------------------
@@ -95,18 +96,20 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   parameter Real C_cond_wall = rho_wall * V_wall_c * cp_wall "condenser wall capacitance [J/K]";
   parameter Real C_wick = rho_wick * cp_wick * V_wick "wick effective capacitance [J/K]";
   parameter Real C_adiab_wall = rho_wall * V_wall_a * cp_wall "adiabatic wall capacitance [J/K]";
+  
+  parameter Real C_Stirling = 3*C_cond_wall "Estimated/tuned Stirling capacitance [J/K]"; 
 
   //----------------------------
   // Resistances  
   //----------------------------
-  parameter Real R_wall_e = 1/(2*pi*k_wall*Le)*Modelica.Math.log(ro_wall/ri_wall); 
-  parameter Real R_wick_e = 1/(2*pi*k_wick*Le)*Modelica.Math.log(ro_wick/ri_wick); 
+  parameter Real R_wall_e = 1/(2*pi*k_wall*Le)*log(ro_wall/ri_wall); 
+  parameter Real R_wick_e = 1/(2*pi*k_wick*Le)*log(ro_wick/ri_wick); 
 
-  parameter Real R_wall_c = 1/(2*pi*k_wall*Lc)*Modelica.Math.log(ro_wall/ri_wall); 
+  parameter Real R_wall_c = 1/(2*pi*k_wall*Lc)*log(ro_wall/ri_wall); 
   //There is no wick in the condenser or adiabitic region in KRUSTY
-  parameter Real R_wick_c = 0.0;   //1/(2*pi*k_wick*Lc)*Modelica.Math.log(ro_wick/ri_wick);  
+  parameter Real R_wick_c = 0.0;   //1/(2*pi*k_wick*Lc)*log(ro_wick/ri_wick);  
   //There is no wick in the condenser or adiabitic region in KRUSTY
-  parameter Real R_wick_a = 0.0;   //1/(2*pi*k_wick*Lc)*Modelica.Math.log(ro_wick/ri_wick);
+  parameter Real R_wick_a = 0.0;   //1/(2*pi*k_wick*Lc)*log(ro_wick/ri_wick);
   parameter Real R_evap_radial = R_wall_e + R_wick_e;
   parameter Real R_cond_radial = R_wall_c + R_wick_c;
   
@@ -122,6 +125,9 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   parameter Real T_cond_nominal = T_stirling_nominal + Q_cond_nominal*R_stirling_hp_interface; 
   parameter Real HTC = Q_cond_nominal/(T_cond_nominal - T_stirling_nominal);
   
+  parameter Real T_stirling_cold_nominal  = 65 + 273.15; 
+  parameter Real HTC_cold = Q_cond_nominal/(T_stirling_nominal - T_stirling_cold_nominal);
+  
   // Helper correlation functions   
   /*vapour pressure correlation*/
   function pv_correlation
@@ -131,7 +137,7 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
     protected constant Real R_g = 8.31446/0.02299; 
   algorithm
     //Theoretical (Clausius-Clapeyron), relating to the lowest experimentally known vapour pressure (at 0.49 atm) 
-    pv := 49.64925e3*Modelica.Math.exp(h_lv/R_g*(1/1072. - 1/T));
+    pv := 49.64925e3*exp(h_lv/R_g*(1/1072. - 1/T));
     
     //Extrapolating from non-vacuum vapour pressures    
     //pv := 10^(4.51961 - 5202.12/T) * 101325.; //source: https://ntrs.nasa.gov/api/citations/19650014783/downloads/19650014783.pdf
@@ -145,6 +151,14 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   algorithm 
     cp := ( 20.80573 + 0.277206*(T/1000.) - 0.392086*(T/1000.)^2. + 0.119634*(T/1000.)^3. - 0.008879/(T/1000.)^2 ) / 0.023;
   end cp_v_correlation;  
+  
+  function mu_v_correlation 
+    input Real T "Temperature [K]";
+    output Real mu "Dynamic viscosity of sodium vapour [Pa*s]";
+  algorithm 
+    mu := 8.4491E-9*(T-273.15) + 4.8898E-6; //correlation derived from table by Dunning https://www.osti.gov/servlets/purl/4120472
+    //mu := 2.872E-5 //Source: https://scispace.com/pdf/thermophysical-properties-of-sodium-2v306hkn25.pdf";
+  end mu_v_correlation;
   
   function cp_l_correlation
     input Real T "Temperature [K]";
@@ -161,6 +175,7 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   end rho_l_correlation;  
   
   
+  
   //----------------------------
   // States
   //----------------------------
@@ -173,6 +188,7 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   
   Real p_v  "vapour pressure at instantaneous temperature [Pa]";
   Real rho_v "instantaneous vapour density [kg/m3]";  
+  Real mu_v "instantaneous dynamic viscosity [Pa*s]";
   Real DeltaP "pressure drop in vapour core"; 
   
   //----------------------------
@@ -195,8 +211,11 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   Real T_tr (start=1000., fixed=false) "Transition temperature (rarefied->continuum flow) [K]";  
   Real p_v_tr "vapour pressure at the computed transition temperature";
   Real rho_v_tr "vapour density at the computed transition temperature";    
+  Real mu_v_tr "dynamic viscosity at the computed transition temperature";
+  
   Real R_vapour_ax_tr "vapour resistance at the computed transition temperature";
   Real R_vapour_ax_posttransition; 
+  
   
   //Smoothing function 
   Real S; 
@@ -218,13 +237,26 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   //----------------------------
   input Real Q_evap_input;
   input Real Q_cond_input;
-  Real Q_evap "heat addition rate to evaporator [W]";
-  Real Q_cond "heat removal rate from condenser [W]";
+  input Real Q_stirling_input;
+  Real Q_evap_bc "heat addition rate to evaporator [W]";
+  Real Q_cond_bc "heat removal rate from condenser [W]";
+  Real Q_Stirling_bc "heat removal rate from Stirling PCS [W]";
   
-  //Give the option of accounting for heat pipe activation or not 
+  
+  //----------------------------
+  // Model options
+  //----------------------------
+  //Option to account for heat pipe activation or not 
   parameter Boolean MODEL_HP_STARTUP = true;
+  //Option to model the core as a single lump or simply take Q_evap as a boundary condition
+  parameter Boolean MODEL_CORE = true; 
   //Give the option to model the thermal mass of the Stirling PCS
   parameter Boolean MODEL_STIRLING_MASS = true; 
+    
+  //----------------------------
+  // Latches
+  //----------------------------
+  Real STIRLING_ACTIVATED;
     
   //----------------------------
   // Outputs / signals
@@ -246,19 +278,20 @@ equation
   //How about tuning di_wick to match? It was a guess value after all. 
   //Turns out not to be so sensitive to this...
   
-  H_internal_l = C_wick*T_wick*porosity; //crude approximation
   p_v = pv_correlation(T_vap);
   p_v_tr = pv_correlation(T_tr);
   rho_v = p_v/R_g/T_vap;
-  rho_v_tr = p_v_tr/R_g/T_tr; 
-  DeltaP = 8*mu_v*(La+Le/2+Lc/2)/(h_lv*rho_v*r_vapour_eff^4.)*Q_wv;// just to inspect the pressure drop 
+  rho_v_tr = p_v_tr/R_g/T_tr;
+  mu_v = mu_v_correlation(T_vap);
+  mu_v_tr = mu_v_correlation(T_tr); 
+  DeltaP = 8*mu_v_correlation(T_vap)*(La+Le/2+Lc/2)/(h_lv*rho_v*r_vapour_eff^4.)*Q_wv;// just to inspect the pressure drop 
   
   
   /*axial convective thermal resistance derived from Clausius-Clapeyron (Guo et al.) */
-  R_vapour_ax_tr = 8*(R_g)*T_tr^2.*mu_v*(La+Le/2.+Lc/2.)/(h_lv^2.*p_v_tr*pi*rho_v_tr*r_vapour_eff^4.);
+  R_vapour_ax_tr = 8*(R_g)*T_tr^2.*mu_v_tr*(La+Le/2.+Lc/2.)/(h_lv^2.*p_v_tr*pi*rho_v_tr*r_vapour_eff^4.);
   R_vapour_ax_posttransition = 8*(R_g)*T_vap^2.*mu_v*(La+Le/2.+Lc/2.)/(h_lv^2.*p_v*pi*rho_v*r_vapour_eff^4.);  
   //alternative formulation based on integral Claus-Clapeyron--numerically unstable
-  //R_vapour_ax_posttransition = (1/(R_g/h_lv*Modelica.Math.log(p_v/(p_v - DeltaP)) + 1/T_vap) - T_vap)/Q_wv;     
+  //R_vapour_ax_posttransition = (1/(R_g/h_lv*log(p_v/(p_v - DeltaP)) + 1/T_vap) - T_vap)/Q_wv;     
   
   
   S = 1 / (1 + exp(-beta*(T_vap - T_tr))); //Smoothing sigmoid function   
@@ -287,21 +320,30 @@ equation
   //----------------------------
   
   if Q_evap_input > 0 then 
-    Q_evap = Q_evap_input;
-  else 
-    //Q_evap = 2350/8.;
-    
-    // Core monolith -> evaporator
-    Q_evap = (T_monolith - T_evap)/R_mono_evap; 
+    Q_evap_bc = Q_evap_input;
+  else     
+    if MODEL_CORE then 
+      //Core monolith->evaporator
+      Q_evap_bc = (T_monolith - T_evap)/R_mono_evap; 
+    else
+      Q_evap_bc = 2350/8.;
+    end if;
   end if;
   
   if Q_cond_input > 0 then 
-    Q_cond = Q_cond_input;
+    Q_cond_bc = Q_cond_input;
   else 
-    //Q_cond = 2350/8.;
-    //Q_cond = HTC*(T_cond - T_stirling_nominal);    
-    Q_cond = max(0, HTC*(T_cond - T_stirling_nominal));  //avoid adding heat to the heat pipe via the condenser    
+    //Q_cond = 2350/8.;    
+    Q_cond_bc = max(0, HTC*(T_cond - T_stirling_nominal));  //Completely avoid adding heat to the condenser based on this HTC
   end if;
+  
+  if Q_stirling_input > 0 then
+    Q_Stirling_bc = Q_stirling_input;
+  else 
+    //Q_Stirling_bc = 2350/8.;
+    Q_Stirling_bc = HTC_cold*(T_Stirling - T_stirling_cold_nominal); //Allow heat addition to condenser (but only after latch trigger, see below)
+  end if;
+  
   
   // Evaporator->wick
   Q_ew  = (T_evap - T_wick) / R_evap_radial;
@@ -315,34 +357,56 @@ equation
   
   // Evaporator->condenser
   Q_ec = (T_evap - T_cond) / R_wall_axial;
+  
+  // Condenser->Stirling 
+  Q_cs = (T_cond - T_Stirling) / R_stirling_hp_interface; //thermal resistance according to prescribed nominal DeltaT
 
   //----------------------------
   // Energy balances
   //----------------------------
   
   // Core monolith - based on the full geometry
-  C_monolith * der(T_monolith) = 2350 - 8*Q_evap;
+  if MODEL_CORE then 
+    C_monolith * der(T_monolith) = 2350 - 8*Q_evap_bc;
+    //C_monolith * der(T_monolith) = 2350 - 2*Q_evap_bc; //only two Stirling convertors are active at first
+  else 
+    T_monolith = 0; //dummy value
+  end if; 
   
-  // Evaporator
-  //C_evap_wall * der(T_evap) = Q_evap - Q_ew - Q_ea;
-  //C_evap_wall * der(T_evap) = Q_evap - Q_ew - Q_ec;
-  (C_evap_wall + C_adiab_wall) * der(T_evap) = Q_evap - Q_ew - Q_ec;
+  // Evaporator with thermal mass of adiabatic section lumped in  
+  (C_evap_wall + C_adiab_wall) * der(T_evap) = Q_evap_bc - Q_ew - Q_ec;
 
   // Wick
   C_wick * der(T_wick) = Q_ew - Q_wv; //Neglecting axial conductance in the wick
 
-  // Vapor
+  // Vapour
   C_vapour = rho_v*cp_v*V_vcore; //Update vapour capacitance based on density (rarefied/continuous state)
   C_vapour * der(T_vap) = Q_wv - Q_vc;
-
   
-  // Condenser + adiabatic section)
-  if T_cond < T_stirling_nominal then 
-    (C_cond_wall*3) * der(T_cond) = Q_vc + Q_ec; //factor in virtual thermal mass of PCS and eliminate any potential cooling. 
-    //Should probably actually add an equation for the Stirling temp in this state
-  else
-    C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cond;
+  // Condenser and Stirling PCS
+  if MODEL_STIRLING_MASS then    
+    C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cs;    
+    if (T_Stirling > T_stirling_nominal) then 
+      //C_Stirling * der(T_Stirling) = Q_cs - Q_Stirling_bc*min(1, (T_Stirling-T_stirling_nominal)); //quickly ramp up the BC
+      //C_Stirling * der(T_Stirling) = Q_cs - Q_Stirling_bc;       
+      der(STIRLING_ACTIVATED) = 1; //Trigger latch for persistent activation of Stirling PCS
+    else 
+      //C_Stirling * der(T_Stirling) = Q_cs;      
+      der(STIRLING_ACTIVATED) = 0;
+    end if;
+    
+    if (STIRLING_ACTIVATED > 0) then 
+      C_Stirling * der(T_Stirling) = Q_cs - Q_Stirling_bc;       
+    else 
+      C_Stirling * der(T_Stirling) = Q_cs; 
+    end if;
+  else 
+    C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
+    T_Stirling = 0; //dummy value
+    
+    der(STIRLING_ACTIVATED) = 0;
   end if; 
-
+  
+  
 
 end HeatPipeWithVapourCore;
