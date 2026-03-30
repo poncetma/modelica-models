@@ -164,13 +164,13 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   //----------------------------
   // States
   //----------------------------
-  Real T_monolith (start=302, fixed=false "fuel monolith avg temp [K]"); 
-  Real T_evap (start=302, fixed = false) "evaporator wall temp [K]";
-  Real T_wick (start=301, fixed = false) "wick temp (evap) [K]";
-  Real T_vap (start=301, fixed = false) "vapour temperature [K]";
-  //Real T_adiab (start=300, fixed = false) "adiabatic wall temp [K]";
+  Real T_monolith (start=300, fixed=false "fuel monolith avg temp [K]"); 
+  Real T_evap (start=300, fixed = false) "evaporator wall temp [K]";
+  Real T_wick (start=300, fixed = false) "wick temp (evap) [K]";
+  Real T_vap (start=300, fixed = false) "vapour temperature [K]";  
   Real T_cond (start=300, fixed = false) "condenser wall temp [K]";  
-  //Real pv_tr "vapour pressure of sodium at transition temperature [Pa]";
+  Real T_Stirling (start=300, fixed = false) "Stirling PCS lumped temperature [K]"; 
+  
   Real p_v  "vapour pressure at instantaneous temperature [Pa]";
   Real rho_v "instantaneous vapour density [kg/m3]";  
   Real DeltaP "pressure drop in vapour core"; 
@@ -208,12 +208,9 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   //----------------------------
   Real Q_ew "evaporator->wick";
   Real Q_wv "wick->vapour";
-  Real Q_vc "vapour->condenser";
-  /*
-  Real Q_ea "evaporator->adiabatic section"; //path through wall
-  Real Q_ac "adiabatic section-> condenser";
-  */
+  Real Q_vc "vapour->condenser";  
   Real Q_ec "evaporator->condenser";
+  Real Q_cs "condenser->Stirling CPS";
   Real R_vc "combined thermal resistance from vapour to condenser"; 
   
   //----------------------------
@@ -225,7 +222,9 @@ The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired 
   Real Q_cond "heat removal rate from condenser [W]";
   
   //Give the option of accounting for heat pipe activation or not 
-  parameter Boolean MODEL_ACTIVATION = true;
+  parameter Boolean MODEL_HP_STARTUP = true;
+  //Give the option to model the thermal mass of the Stirling PCS
+  parameter Boolean MODEL_STIRLING_MASS = true; 
     
   //----------------------------
   // Outputs / signals
@@ -263,7 +262,7 @@ equation
   
   
   S = 1 / (1 + exp(-beta*(T_vap - T_tr))); //Smoothing sigmoid function   
-  if MODEL_ACTIVATION then 
+  if MODEL_HP_STARTUP then 
     R_vapour_ax = (1 - S)*R_high + S*(R_vapour_ax_posttransition); 
     //R_vapour_ax = (1 - S)*R_high + S*(R_vapour_ax_tr); //the resistance at the transition temp is low enough that it may as well be used throughout.
   else 
@@ -308,20 +307,11 @@ equation
   Q_ew  = (T_evap - T_wick) / R_evap_radial;
 
   // Wick->vapor 
-  Q_wv = (T_wick - T_vap) / R_wv;
-  //Q_wv = (T_wick - T_vap) / (R_wv + R_vapour_ax/2.); //(half the axial vapour resistance plus small interface resistance)
+  Q_wv = (T_wick - T_vap) / R_wv;  
 
   // Vapor->condenser 
-  R_vc = max(R_cond_radial, R_cond_radial + R_vapour_ax); 
-  //R_vc = max(R_cond_radial, R_cond_radial + R_vapour_ax/2.); 
-  Q_vc = (T_vap - T_cond) / R_vc;
-  //Q_vc = (T_vap - T_cond) / (R_cond_radial + R_vapour_ax);
-  
-  // Evaporator->adiabatic section
-  //Q_ea = (T_evap - T_adiab) / (R_wall_axial/2.); 
-  
-  // Adiabatic section->condenser
-  //Q_ac = (T_adiab - T_cond) / (R_wall_axial/2.);
+  R_vc = max(R_cond_radial, R_cond_radial + R_vapour_ax);   
+  Q_vc = (T_vap - T_cond) / R_vc;  
   
   // Evaporator->condenser
   Q_ec = (T_evap - T_cond) / R_wall_axial;
@@ -345,13 +335,6 @@ equation
   C_vapour = rho_v*cp_v*V_vcore; //Update vapour capacitance based on density (rarefied/continuous state)
   C_vapour * der(T_vap) = Q_wv - Q_vc;
 
-  //Instead of explicitly solving for the adiabatic wall temperature, give its thermal mass to the condenser  
-  /*
-  // Adiabatic section  
-  C_adiab_wall * der(T_adiab) = Q_ea - Q_ac;  
-  // Condenser
-  C_cond_wall * der(T_cond) = Q_vc + Q_ac - Q_cond;
-  */
   
   // Condenser + adiabatic section)
   if T_cond < T_stirling_nominal then 
