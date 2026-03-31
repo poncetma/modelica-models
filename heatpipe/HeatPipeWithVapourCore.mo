@@ -411,7 +411,7 @@ equation
     C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
     T_Stirling = 0; //dummy value
     
-    der(STIRLING_ACTIVATED) = 0; //Don't need the latchin this simplified case. 
+    der(STIRLING_ACTIVATED) = 0; //Don't need the latch in this simplified case. 
   end if; 
   
   

@@ -1,7 +1,7 @@
-model conductionKRUSTY
+model conductionKRUSTYRadialDisc
 /*
  Control-volume-based implementation of 1D heat conduction in KRUSTY with a uniform source. 
- Currently based on Cartesian coordinates.
+ Now with cylindrical coordinates and proper radial discretisation (still assuming k is spatially uniform, for simplicity). 
  This version includes implicitly accounts thermal losses out of the core (heat not going through the heat pipes).
  
  Inputs: total integral power (heat deposition rate from fission + decay heat), evaporator wall temperature, heat loss rate 
@@ -11,12 +11,10 @@ import Modelica.Constants.pi;
   //input Real Q_loss_nominal_input;
   input Real Q_loss_input;
   input Real P_integral_input "Instantaneous integral power [W]";  
-  input Real T_outer_wall_input "Temperature of heat pipe wall [K]";
-
-  parameter Real Q_loss_nominal = 350.0;
+  input Real T_outer_wall_input "Temperature of heat pipe wall [K]";  
   
   // --- Physical Parameters (KRUSTY U-10Mo) ---
-  final constant Integer N = 65 "Number of radial shells"; //tested up to 500
+  final constant Integer N = 80 "Number of radial shells"; //tested up to 500
   parameter Real r_inner = 0.02 "Inner fuel radius [m]";  
   parameter Real L = 0.25 "Core height [m]";   
   parameter Real fuel_volume = 0.00186454; //computed in OpenFOAM from KRUSTY mesh.   
@@ -39,8 +37,8 @@ import Modelica.Constants.pi;
     protected Real T_celcius_local;
   algorithm
     T_celcius_local := T_local - 273.15;
-    //k := 10.2 + (3.51E-2)*T_celcius_local;     //This causes instabilities as the discretisation isn't set up for spatially-varying conductivity
-    k := 10.2 + (3.51E-2)*(1091.45-273.15);     
+    k := 10.2 + (3.51E-2)*T_celcius_local; //With the old discretisation, this caused instabilities. Now with rigorously derived version, no issues. 
+    //k := 10.2 + (3.51E-2)*(1091.45-273.15);         
   end k_correlation;
   
   function rho_correlation
@@ -55,10 +53,7 @@ import Modelica.Constants.pi;
   
   // --- Heat Pipe / Boundary Parameters ---
   parameter Real T_HP_nominal = 1073.3074676166252 "Fixed HP temperature for steady-state [K]"; 
-  parameter Integer n_hp = 8 "Number of heat pipes";
-  
-  //parameter Real P_total_nom = 2350.0  "Nominal total thermal power [W]";
-  parameter Real P_total_nom = 2872.34 "Nominal total thermal power before subtracting far-field heating and thermal losses [W]";
+  parameter Integer n_hp = 8 "Number of heat pipes";  
   
   Real Q_loss "Heat lost through MLI [W]";
   Real P_integral; 
@@ -69,7 +64,7 @@ import Modelica.Constants.pi;
   Real q_gen_prof[N]; //Define q_gen based on a prescribed radial profile
   
   Real T[N] "Temperature at shell centers [K]";
-  Real Q_flow[N+1] "Heat flow rate across shell faces [W]";
+  Real q_flow[N+1] "Heat flux across shell faces [W/m^2]";
   Real V_shell[N] "Volume of each shell [m3]";
   
   Real T_outer_wall "Temperature at the heat pipe interface [K]";
@@ -86,12 +81,18 @@ import Modelica.Constants.pi;
 
   parameter Real recoverable_power_fraction = 0.94; //estimated near-field heating fraction as per Poston et al
   
+  parameter Real Q_loss_nominal = 350.0 "nominal heat loss rate, set to agree with experiment"; 
+  
+  //parameter Real P_total_nom = 2872.34 "Nominal total thermal power before subtracting far-field heating and thermal losses [W]";
+  parameter Real P_total_nom = (2350 + Q_loss_nominal)/recoverable_power_fraction "Nominal power from fission and decay [W]";
+  
+  
 initial equation
   for i in 1:N loop 
     der(T[i]) = 0;
   end for;
+  
 equation
-
   if Q_loss_input > 1e-6 then 
     Q_loss = Q_loss_input;
   else
@@ -117,7 +118,7 @@ equation
   power_profile_integral = sum(q_gen_prof[i] * V_shell[i] for i in 1:N);
   
   
-  Q_flow[1] = 0; // Inner Boundary: Adiabatic (Control Rod Hole) 
+  q_flow[1] = 0; // Inner Boundary: Adiabatic (Control Rod Hole) 
   
   // The temperature at the evap wall is fixed, received from HP solver. 
   if T_outer_wall_input > 1e-6 then
@@ -126,30 +127,33 @@ equation
     T_outer_wall = T_HP_nominal;
   end if;
   
-  // Energy Balance for each Shell
-  // inner Q_flows is positive when heat flows towards positive r (negative T gradient)
-  for i in 2:N loop
-    Q_flow[i] = -k_correlation((T[i-1] + T[i])/2.) * (2 * pi * r_face[i] * L) * (T[i] - T[i-1]) / dr; 
+  // Energy Balance for each shell in terms of heat flux
+  // q_flow is positive when heat flows towards positive r (negative T gradient)
+  for i in 2:N loop    
+    q_flow[i] = -k_correlation(T[i]) * (T[i] - T[i-1]) / dr; //Fourier's law    
   end for;  
-  //Assume Q_loss is constant (true for small variation of outer wall temp)
-  //Q_flow[N+1] = -k_correlation((T[N]+T_outer_wall)/2.) * (A_hp_eff) * (T_outer_wall - T[N]) / (dr[N]/2) + Q_loss; 
+    
+  // Outer boundary: MUST use the actual interfacial area to have a consistent 2nd order scheme! This affects the solution but have shown that it's not a major difference
+  q_flow[N+1] = -k_correlation(T_outer_wall) * (T_outer_wall - T[N]) / (dr/2); //Note half delta r since T_outer_wall doesn't correspond to a node average
   
-  // Outer boundary: MUST use the actual interfacial area to have a consistent 2nd order scheme!
-  // This affects the solution but have shown that it's not a radical difference
-  Q_flow[N+1] = -k_correlation((T[N]+T_outer_wall)/2.) * (2*pi*r_face[N+1]*L) * (T_outer_wall - T[N]) / (dr/2); //+Q_loss; 
-
-  for i in 1:N loop    
-    q_gen[i] = q_gen_prof[i]/power_profile_integral*P_integral; //update q_gen
+  
+  for i in 1:N-1 loop    
+    q_gen[i] = q_gen_prof[i]/power_profile_integral*P_integral; //update q_gen    
     
-    rho_correlation(T[i]) * cp_correlation(T[i]) * der(T[i]) = Q_flow[i] - Q_flow[i+1] + q_gen[i] * V_shell[i];    
+    //derived radial discretisation with spatially uniform conductivity:
+    //rho_correlation(T[i]) * cp_correlation(T[i]) * der(T[i]) = q_flow[i]*(1/dr - 1/r_face[i]) - q_flow[i+1]/dr + q_gen[i];    
     
+    //derivation with spatially-dependent conductivity:
+    rho_correlation(T[i]) * cp_correlation(T[i]) * der(T[i]) = q_flow[i]*(1/dr - 1/r_face[i] + 1/k_correlation(T[i])*(k_correlation(T[i+1])-k_correlation(T[i]))/dr ) - q_flow[i+1]/dr + q_gen[i];    
   end for;  
-  verified_power_integral = sum(q_gen[i] * V_shell[i] for i in 1:N);
- 
+  // handle outer boundary case
+  q_gen[N] = q_gen_prof[N]/power_profile_integral*P_integral; //update q_gen
+    rho_correlation(T[N]) * cp_correlation(T[N]) * der(T[N]) = q_flow[N]*(1/dr - 1/r_face[N] + 1/k_correlation(T[N])*(k_correlation(T_outer_wall)-k_correlation(T[N]))/(dr/2) ) - q_flow[N+1]/dr + q_gen[N];    
   
-  T_mean = sum(T[i] * V_shell[i] for i in 1:N) / fuel_volume;
-  //Q_evap_out = Q_flow[N+1] - Q_loss;
-  Q_evap_out = Q_flow[N+1]; //do not model the loss explicitly
+    
+  verified_power_integral = sum(q_gen[i] * V_shell[i] for i in 1:N);   
+  T_mean = sum(T[i] * V_shell[i] for i in 1:N) / fuel_volume;    
+  Q_evap_out = q_flow[N+1]*(2*pi*r_face[N+1]*L); //Not modelling heat loss explicitly (else it would be subtracted here)
   
   annotation(uses(Modelica(version="4.0.0")));
-end conductionKRUSTY;
+end conductionKRUSTYRadialDisc;
