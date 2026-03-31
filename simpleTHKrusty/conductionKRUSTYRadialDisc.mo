@@ -1,8 +1,9 @@
 model conductionKRUSTYRadialDisc
 /*
- Control-volume-based implementation of 1D heat conduction in KRUSTY with a uniform source. 
- Now with cylindrical coordinates and proper radial discretisation (still assuming k is spatially uniform, for simplicity). 
- This version includes implicitly accounts thermal losses out of the core (heat not going through the heat pipes).
+ Finite-difference implementation of 1D radial heat conduction in KRUSTY with a possibly non-uniform source. 
+ The cylindrical coordinate discretisation accounts for non-uniform and time-varying conductivity. 
+ 
+ This version implicitly accounts thermal losses out of the core (heat not going through the heat pipes).
  
  Inputs: total integral power (heat deposition rate from fission + decay heat), evaporator wall temperature, heat loss rate 
  Outputs: HP wall heat flux, Core average temperature
@@ -83,7 +84,7 @@ import Modelica.Constants.pi;
   
   parameter Real Q_loss_nominal = 350.0 "nominal heat loss rate, set to agree with experiment"; 
   
-  //parameter Real P_total_nom = 2872.34 "Nominal total thermal power before subtracting far-field heating and thermal losses [W]";
+  //Determine what nominal nuclear heating is needed to get the final effective thermal power that we expect 
   parameter Real P_total_nom = (2350 + Q_loss_nominal)/recoverable_power_fraction "Nominal power from fission and decay [W]";
   
   
@@ -135,8 +136,7 @@ equation
     
   // Outer boundary: MUST use the actual interfacial area to have a consistent 2nd order scheme! This affects the solution but have shown that it's not a major difference
   q_flow[N+1] = -k_correlation(T_outer_wall) * (T_outer_wall - T[N]) / (dr/2); //Note half delta r since T_outer_wall doesn't correspond to a node average
-  
-  
+    
   for i in 1:N-1 loop    
     q_gen[i] = q_gen_prof[i]/power_profile_integral*P_integral; //update q_gen    
     
