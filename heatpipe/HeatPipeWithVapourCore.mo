@@ -69,6 +69,8 @@ Note that the melting phase of start-up is neglected as the total enthalpy of fu
   parameter Real R_g = 8.31446/M_g "specific gas constant [J/kg/K]";
    
   parameter Real h_lv = 4237E3 "latent heat of vapourisation [J/kg]";
+  
+  // Liquid (testing)
   parameter Real h_sl = 113E3 "latent heat of fusion [J/kg]";
   
   parameter Real T_melt = 370.97 "sodium melting point [K]";
@@ -80,10 +82,9 @@ Note that the melting phase of start-up is neglected as the total enthalpy of fu
   parameter Real H_melt_total = h_sl*m_melt_total;
   parameter Real eq_temp_rise = H_melt_total/cp_l_thresh;
   
-  Real C_vapour "vapour capacitance, a function of instantaneous density/concentration [J/K]"; 
   
   //----------------------------
-  // Volumes / capacitances
+  // Volumes & capacitances
   //----------------------------
   parameter Real V_wall_e = pi*(ro_wall^2 - ri_wall^2)*Le;
   parameter Real V_wall_c = pi*(ro_wall^2 - ri_wall^2)*Lc;
@@ -97,6 +98,8 @@ Note that the melting phase of start-up is neglected as the total enthalpy of fu
   parameter Real C_wick = rho_wick * cp_wick * V_wick "wick effective capacitance [J/K]";
   parameter Real C_adiab_wall = rho_wall * V_wall_a * cp_wall "adiabatic wall capacitance [J/K]";
   
+  Real C_vapour "vapour capacitance, a function of instantaneous density/concentration [J/K]"; 
+    
   parameter Real C_Stirling = 3*C_cond_wall "Estimated/tuned Stirling capacitance [J/K]"; 
 
   //----------------------------
@@ -113,11 +116,11 @@ Note that the melting phase of start-up is neglected as the total enthalpy of fu
   parameter Real R_evap_radial = R_wall_e + R_wick_e;
   parameter Real R_cond_radial = R_wall_c + R_wick_c;
   
-  parameter Real R_wall_axial = (La + 0.5*Le + 0.5*Lc )/(k_wall*pi*(ro_wall^2. - ri_wall^2)); //effective axial thermal resistance of the wall
+  parameter Real R_wall_axial = (La + 0.5*Le + 0.5*Lc )/(k_wall*pi*(ro_wall^2. - ri_wall^2)) "effective axial thermal resistance of the wall"; 
   
   parameter Real R_wv = 1E-6 "wick-vapour interface resistance";
   
-  Real R_vapour_ax; 
+  Real R_vapour_ax "Axial resistance of the vapour core, dependent on vapour pressure and flow transition"; 
   
   parameter Real Q_cond_nominal = 2350/8;
   parameter Real R_stirling_hp_interface = 165/Q_cond_nominal;
@@ -128,7 +131,10 @@ Note that the melting phase of start-up is neglected as the total enthalpy of fu
   parameter Real T_stirling_cold_nominal  = 65 + 273.15; 
   parameter Real HTC_cold = Q_cond_nominal/(T_stirling_nominal - T_stirling_cold_nominal);
   
-  // Helper correlation functions   
+  //----------------------------
+  // Helper correlation functions
+  //----------------------------
+  
   /*vapour pressure correlation*/
   function pv_correlation
     input Real T "Temperature [K]";    
@@ -175,16 +181,15 @@ Note that the melting phase of start-up is neglected as the total enthalpy of fu
   end rho_l_correlation;  
   
   
-  
   //----------------------------
   // States
   //----------------------------
-  Real T_monolith (start=300, fixed=false "fuel monolith avg temp [K]"); 
-  Real T_evap (start=300, fixed = false) "evaporator wall temp [K]";
-  Real T_wick (start=300, fixed = false) "wick temp (evap) [K]";
-  Real T_vap (start=300, fixed = false) "vapour temperature [K]";  
-  Real T_cond (start=300, fixed = false) "condenser wall temp [K]";  
-  Real T_Stirling (start=300, fixed = false) "Stirling PCS lumped temperature [K]"; 
+  Real T_monolith (start=300, fixed=true "fuel monolith avg temp [K]"); 
+  Real T_evap (start=300, fixed = true) "evaporator wall temp [K]";
+  Real T_wick (start=300, fixed = true) "wick temp (evap) [K]";
+  Real T_vap (start=300, fixed = true) "vapour temperature [K]";  
+  Real T_cond (start=300, fixed = true) "condenser wall temp [K]";  
+  Real T_Stirling (start=300, fixed = true) "Stirling PCS lumped temperature [K]"; 
   
   Real p_v  "vapour pressure at instantaneous temperature [Pa]";
   Real rho_v "instantaneous vapour density [kg/m3]";  
@@ -193,6 +198,7 @@ Note that the melting phase of start-up is neglected as the total enthalpy of fu
   
   //----------------------------
   // Toy model of the core -- assume single lump, i.e. no internal temperature gradient
+  // This model is only meant to be used for quick tests without external FMU coupling.
   //----------------------------  
   parameter Real rho_monolith = 17110;
   parameter Real cp_monolith = 189;
@@ -205,7 +211,7 @@ Note that the melting phase of start-up is neglected as the total enthalpy of fu
   parameter Real R_mono_evap = L_mono_evap/A_contact/k_monolith;
   
   //----------------------------
-  // Transition values
+  // Flow transition 
   //----------------------------
   parameter Real Knuds_crit = 0.01 "critical Knudsen number [-] for transition to continuum flow";  
   Real T_tr (start=1000., fixed=false) "Transition temperature (rarefied->continuum flow) [K]";  
@@ -244,24 +250,24 @@ Note that the melting phase of start-up is neglected as the total enthalpy of fu
   
   
   //----------------------------
-  // Model options
+  // Model options -- these are not intended to be selectable by the FMU handler
   //----------------------------
   //Option to account for heat pipe activation or not 
   parameter Boolean MODEL_HP_STARTUP = true;
   //Option to model the core as a single lump or simply take Q_evap as a boundary condition
-  parameter Boolean MODEL_CORE = true; 
+  parameter Boolean MODEL_CORE_INTERNALLY = true; 
   //Give the option to model the thermal mass of the Stirling PCS
   parameter Boolean MODEL_STIRLING_MASS = true; 
     
   //----------------------------
-  // Latches
+  // Latches (flags with persistence)
   //----------------------------
-  Real STIRLING_ACTIVATED;
+  Real STIRLING_ACTIVATED (start=0, fixed=true);
     
   //----------------------------
   // Outputs / signals
   //----------------------------
-  Boolean HP_activated;
+  Boolean HP_activated "Flag raised when the heat pipe has effective heat transfer";
   
   //track the Reynolds number of the vapour throughout the simulation
   Real v_v "vapour velocity [m/s]" ;
@@ -274,9 +280,8 @@ equation
   //The factor 1.051/sqrt(2) comes from the corrected mean free path accounting for the motion of other particles during the flight of a an average particle
   T_tr = ( sqrt(2)*pi*d_v^2.*pv_correlation(T_tr)*(di_wick) )/( 1.051*kappa )*Knuds_crit; //non-linear equation solved automatically with initial guess. 
   
-  //The experimentally-derived heat pipe activation temperature was ~773 K as oposed to ~700 K computed here.
-  //How about tuning di_wick to match? It was a guess value after all. 
-  //Turns out not to be so sensitive to this...
+  //Note: The experimentally-derived heat pipe activation temperature in KRUSTY was ~773 K as opposed to ~700 K computed here.
+
   
   p_v = pv_correlation(T_vap);
   p_v_tr = pv_correlation(T_tr);
@@ -306,8 +311,7 @@ equation
   v_v = mdot_v/rho_v/(pi*r_vapour_eff^2);
   Re = rho_v*v_v*(2*r_vapour_eff)/mu_v; 
   
-  /* Basic test for heat pipe activation: is much more heat conducted through the vapour than through the wall? */
-  
+  /* Basic test for heat pipe activation: is much more heat conducted through the vapour than through the wall? */  
   if R_vapour_ax < R_wall_axial/10. then 
     HP_activated = true;
   else 
@@ -319,30 +323,34 @@ equation
   // Heat transfer relations
   //----------------------------
   
-  if Q_evap_input > 0 then 
-    Q_evap_bc = Q_evap_input;
-  else     
-    if MODEL_CORE then 
-      //Core monolith->evaporator
-      Q_evap_bc = (T_monolith - T_evap)/R_mono_evap; 
-    else
-      Q_evap_bc = 2350/8.;
+  if MODEL_CORE_INTERNALLY then 
+    Q_evap_bc = (T_monolith - T_evap)/R_mono_evap;     
+  else
+    if Q_evap_input > 0 then 
+      Q_evap_bc = Q_evap_input;
+    else 
+      Q_evap_bc = Q_cond_nominal;
     end if;
   end if;
   
-  if Q_cond_input > 0 then 
-    Q_cond_bc = Q_cond_input;
+  if MODEL_STIRLING_MASS then 
+    Q_cond_bc = 0;
+    if Q_stirling_input > 0 then
+      Q_Stirling_bc = Q_stirling_input;
+    else
+      Q_Stirling_bc = HTC_cold*(T_Stirling - T_stirling_cold_nominal); 
+      //Q_Stirling_bc = Q_cond_nominal;
+      //Q_Stirling_bc = (Q_cond_nominal*8-640)/8; //trigger a load rejection after a long time (t=8h transient: 640 W of load rejection in total)          
+    end if;
   else 
-    //Q_cond = 2350/8.;    
-    Q_cond_bc = max(0, HTC*(T_cond - T_stirling_nominal));  //Completely avoid adding heat to the condenser based on this HTC
+    if Q_cond_input > 0 then 
+      Q_cond_bc = Q_cond_input;
+    else       
+      Q_cond_bc = max(0, HTC*(T_cond - T_stirling_nominal));  //Completely avoid adding heat to the condenser based on this HTC
+    end if;
   end if;
   
-  if Q_stirling_input > 0 then
-    Q_Stirling_bc = Q_stirling_input;
-  else 
-    //Q_Stirling_bc = 2350/8.;
-    Q_Stirling_bc = HTC_cold*(T_Stirling - T_stirling_cold_nominal); //Allow heat addition to condenser (but only after latch trigger, see below)
-  end if;
+  
   
   
   // Evaporator->wick
@@ -365,8 +373,8 @@ equation
   // Energy balances
   //----------------------------
   
-  // Core monolith - based on the full geometry
-  if MODEL_CORE then 
+  // Core monolith - based on the full geometry. 
+  if MODEL_CORE_INTERNALLY then 
     C_monolith * der(T_monolith) = 2350 - 8*Q_evap_bc;
     //C_monolith * der(T_monolith) = 2350 - 2*Q_evap_bc; //only two Stirling convertors are active at first
   else 
@@ -386,12 +394,11 @@ equation
   // Condenser and Stirling PCS
   if MODEL_STIRLING_MASS then    
     C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cs;    
-    if (T_Stirling > T_stirling_nominal) then 
-      //C_Stirling * der(T_Stirling) = Q_cs - Q_Stirling_bc*min(1, (T_Stirling-T_stirling_nominal)); //quickly ramp up the BC
-      //C_Stirling * der(T_Stirling) = Q_cs - Q_Stirling_bc;       
-      der(STIRLING_ACTIVATED) = 1; //Trigger latch for persistent activation of Stirling PCS
-    else 
-      //C_Stirling * der(T_Stirling) = Q_cs;      
+    
+    //latch trigger
+    if (T_Stirling > T_stirling_nominal) then       
+      der(STIRLING_ACTIVATED) = 1; 
+    else       
       der(STIRLING_ACTIVATED) = 0;
     end if;
     
@@ -404,7 +411,7 @@ equation
     C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
     T_Stirling = 0; //dummy value
     
-    der(STIRLING_ACTIVATED) = 0;
+    der(STIRLING_ACTIVATED) = 0; //Don't need the latchin this simplified case. 
   end if; 
   
   
