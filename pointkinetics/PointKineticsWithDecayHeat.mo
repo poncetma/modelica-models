@@ -498,8 +498,7 @@ function computeICsFromPowerHistory
     Real elamdt;
     Real elamdt_dh;  
   
-  algorithm //manually implemented from TRACE manual
-  
+  algorithm //manually implemented based on formula from TRACE manual
     for k in 1:nK  loop       
       Cs_0[k] := 0.0; //assumes that the full history is provided      
       for i in 1:nT - 1 loop 

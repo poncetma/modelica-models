@@ -80,7 +80,7 @@ import Modelica.Constants.pi;
   output Real Q_evap_out "Heat flow out of heat pipe wall [W]";
   output Real T_mean "Volume-weighted mean temperature [K]";
 
-  parameter Real recoverable_power_fraction = 0.94; //estimated near-field heating fraction as per Poston et al
+  parameter Real recoverable_power_fraction = 0.93703; //Near-field heating fraction as per "KRUSTY Reactor Design" paper
   
   parameter Real Q_loss_nominal = 350.0 "nominal heat loss rate, set to agree with experiment"; 
   
@@ -131,10 +131,10 @@ equation
   // Energy Balance for each shell in terms of heat flux
   // q_flow is positive when heat flows towards positive r (negative T gradient)
   for i in 2:N loop    
-    q_flow[i] = -k_correlation(T[i]) * (T[i] - T[i-1]) / dr; //Fourier's law    
+    q_flow[i] = -k_correlation(T[i]) * (T[i] - T[i-1]) / dr; //Note this only looks like a backward difference, but it's actually forward difference due to indexing change
   end for;  
     
-  // Outer boundary: MUST use the actual interfacial area to have a consistent 2nd order scheme! This affects the solution but have shown that it's not a major difference
+  // Outer boundary
   q_flow[N+1] = -k_correlation(T_outer_wall) * (T_outer_wall - T[N]) / (dr/2); //Note half delta r since T_outer_wall doesn't correspond to a node average
     
   for i in 1:N-1 loop    
