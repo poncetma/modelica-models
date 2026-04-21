@@ -1,9 +1,8 @@
-model conductionKRUSTYRadialDiscExplHeatLoss
+model conductionKRUSTYConservDiscExplHeatLoss
   /*
-   Finite-difference implementation of 1D radial heat conduction in KRUSTY with a possibly non-uniform source. 
-   The cylindrical coordinate discretisation accounts for non-uniform and time-varying conductivity -- however, it is not perfectly conservative. 
-   
-   A semi-implicit/"lagged" scheme is used for the thermal conductivity: it is updated frequently but not at every time-step, and it is not solved simultaneously. 
+   Conservative, finite-volume implementation of 1D heat conduction in KRUSTY with a possibly non-uniform source. 
+      
+   To enable co-simulation as an FMU with a less robust CVODE setup, a semi-implicit/"lagged" scheme is used for the thermal conductivity: it is updated frequently but not at every time-step, and it is not solved simultaneously. 
    
    This version explicitly accounts thermal losses out of the core with a heat transfer coefficient tuned to match
    the nominal observed heat loss. The heat loss is no longer an input.
@@ -14,6 +13,8 @@ model conductionKRUSTYRadialDiscExplHeatLoss
   import Modelica.Constants.pi;
   input Real P_integral_input "Instantaneous integral power [W]";
   input Real T_outer_wall_input "Temperature of heat pipe wall [K]";
+  input Real k_input "Conductivity (mean), controlled externally [W/m/K]"; 
+  
   // --- Physical Parameters (KRUSTY U-10Mo) ---
   final constant Integer N = 25 "Number of radial shells";
   //tested up to several hundred nodes
@@ -45,7 +46,7 @@ model conductionKRUSTYRadialDiscExplHeatLoss
   algorithm
     T_celcius_local := T_local - 273.15;
     k := 10.2 + (3.51E-2)*T_celcius_local;
-//k := 10.2 + (3.51E-2)*(800);
+    //k := 10.2 + (3.51E-2)*(800);
   end k_correlation;
 
   function rho_correlation
@@ -73,7 +74,7 @@ model conductionKRUSTYRadialDiscExplHeatLoss
   Real q_gen_profile[N];
   //Define q_gen based on a prescribed radial profile
   Real T[N](each start = 1073.15) "Temperature at shell centers [K]";
-  Real T_lagged[N]; //Introduce a lagged temperature for semi-implicit scheme
+  Real T_lagged[N] (each start = 1073.15); //Introduce a lagged temperature for semi-implicit scheme
   
   Real q_flow[N + 1] "Heat flux across shell faces [W/m^2]";
   Real V_shell[N] "Volume of each shell [m3]";
@@ -97,37 +98,30 @@ model conductionKRUSTYRadialDiscExplHeatLoss
   //Determine what nominal nuclear heating (fission + decay power) is needed to get the final effective thermal power that we expect at nominal conditions [2350 W after heat losses]
   parameter Real P_total_nom = (2350 + Q_loss_nominal)/recoverable_power_fraction "Nominal power from fission and decay [W]";
   
-  parameter Real dt_lag = 0.1; //only update the conductivity according to this delta t
-  //parameter Real tau_lag = 1;
+  parameter Real dt_lag = 10.0 "frequency with which to update the conductivity within a given call to this Modelica model/FMU";    
+  Real k_mean "mean conductivity, to ensure it's updating correctly";
   
 initial equation
   for i in 1:N loop
     der(T[i]) = 0;
   end for;
-  /*
-  T_lagged = T;
-  T_outer_wall_lagged = T_outer_wall;
-  */
 equation
 
-  when {initial(), sample(0, dt_lag)} then
+  //when sample(0, dt_lag) then
+  when {initial()} then //trigger at the beginning and every dt_lag interval. dt_lag is chosen to be much greater than the typical FMU timestep so that it won't be called internally (encountered issues with that).
     T_lagged = pre(T);
     T_outer_wall_lagged = pre(T_outer_wall);
   end when;
-/*
-  der(T_lagged) = (T - T_lagged)/tau_lag;
-  der(T_outer_wall_lagged) = (T_outer_wall - T_outer_wall_lagged)/tau_lag;
-*/
-  Q_loss = HTC_loss*(T_outer_wall - T_ambient);
-//  Q_loss = 350.0;
 
+  Q_loss = HTC_loss*(T_outer_wall - T_ambient); //At zero power, this should drive the temperature down to T_ambient
+//  Q_loss = 350.0;
 //P_integral is the actual thermal power to compute the temperature field while accounting for heat loss
   if P_integral_input > 1E-9 then
-    P_integral = P_integral_input*recoverable_power_fraction;
-//no longer subtracting Q_loss here
+    P_integral = P_integral_input*recoverable_power_fraction; //no longer subtracting Q_loss here
   else
     P_integral = P_total_nom*recoverable_power_fraction;
   end if;
+  
   for i in 1:N loop
 //follow radial profile and renormalise to nominal integral power
     if i < 9./10.*N then
@@ -147,28 +141,47 @@ equation
   else
     T_outer_wall = T_HP_nominal;
   end if;
-// Energy Balance for each shell in terms of heat flux
-// q_flow is positive when heat flows towards positive r (negative T gradient)
-  for i in 2:N loop
-//use harmonic interpolation for k
-    q_flow[i] = -1.*(2/(1/k_correlation(T_lagged[i - 1]) + 1/k_correlation(T_lagged[i])))*(T[i] - T[i - 1])/dr;
-//Note this only looks like a backward difference, but it's actually forward difference due to indexing shift
-  end for;
-// Outer boundary: heat flux based on half-delta-r to boundary and computed heat loss
-  q_flow[N + 1] = -1.*(2/(1/k_correlation(T_lagged[N]) + 1/k_correlation(T_outer_wall_lagged)))*(T_outer_wall - T[N])/(dr/2) + Q_loss/outer_wall_area;
+  
+  if k_input > 1e-9 then
+    k_mean = k_input;
+    
+    // Energy Balance for each shell in terms of heat flux
+    // q_flow is positive when heat flows towards positive r (negative T gradient)
+    for i in 2:N loop
+      //use harmonic interpolation for k
+      q_flow[i] = -1.*k_mean*(T[i] - T[i - 1])/dr;
+      //Note this only looks like a backward difference, but it's actually forward difference due to indexing shift
+    end for;
+    // Outer boundary: heat flux based on half-delta-r to boundary and computed heat loss
+    q_flow[N + 1] = -1.*k_mean*(T_outer_wall - T[N])/(dr/2) + Q_loss/outer_wall_area;
+  else 
+    k_mean = k_correlation(T_mean);
+    
+    // Energy Balance for each shell in terms of heat flux
+    // q_flow is positive when heat flows towards positive r (negative T gradient)
+    for i in 2:N loop
+      //use harmonic interpolation for k
+      q_flow[i] = -1.*(2/(1/k_correlation(T_lagged[i - 1]) + 1/k_correlation(T_lagged[i])))*(T[i] - T[i - 1])/dr;
+      //Note this only looks like a backward difference, but it's actually forward difference due to indexing shift
+    end for;
+    // Outer boundary: heat flux based on half-delta-r to boundary and computed heat loss
+    q_flow[N + 1] = -1.*(2/(1/k_correlation(T_lagged[N]) + 1/k_correlation(T_outer_wall_lagged)))*(T_outer_wall - T[N])/(dr/2) + Q_loss/outer_wall_area;
+  end if;   
+  
+
 // Update heat source
   for i in 1:N - 1 loop
     q_gen[i] = q_gen_profile[i]/power_profile_integral*P_integral;
-// derivation with spatially-dependent conductivity:
-rho_correlation(T[i]) * cp_correlation(T[i]) * der(T[i]) = q_flow[i]*(1/dr - 1/r_face[i] + 1/k_correlation(T_lagged[i])*(k_correlation(T_lagged[i+1])-k_correlation(T_lagged[i]))/dr ) - q_flow[i+1]/dr + q_gen[i];
+    rho_correlation(T[i])*cp_correlation(T[i])*der(T[i]) = ((2*pi*r_face[i]*L)*q_flow[i] - (2*pi*r_face[i + 1]*L)*q_flow[i + 1])/V_shell[i] + q_gen[i];
   end for;
 // handle outer boundary case
-  q_gen[N] = q_gen_profile[N]/power_profile_integral*P_integral;
-//update q_gen
-rho_correlation(T[N]) * cp_correlation(T[N]) * der(T[N]) = q_flow[N]*(1/dr - 1/r_face[N] + 1/k_correlation(T_lagged[N])*(k_correlation(T_outer_wall_lagged)-k_correlation(T_lagged[N]))/(dr/2) ) - q_flow[N+1]/dr + q_gen[N]; // - Q_loss/V_shell[N];  //Could also subtract the heat loss as a volumetric sink
-
+  q_gen[N] = q_gen_profile[N]/power_profile_integral*P_integral; //update q_gen
+  rho_correlation(T[N])*cp_correlation(T[N])*der(T[N]) = ((2*pi*r_face[N]*L)*q_flow[N] - (2*pi*r_face[N + 1]*L)*q_flow[N + 1])/V_shell[N] + q_gen[N];
+  
   verified_power_integral = sum(q_gen[i]*V_shell[i] for i in 1:N);
   T_mean = sum(T[i]*V_shell[i] for i in 1:N)/fuel_volume;
+  
+  
   Q_outerwall_out = q_flow[N + 1]*(2*pi*r_outer*L);
 //Integrated heat flux out of outer wall
   Q_evap_out = Q_outerwall_out - Q_loss;
@@ -176,5 +189,5 @@ rho_correlation(T[N]) * cp_correlation(T[N]) * der(T[N]) = q_flow[N]*(1/dr - 1/r
   annotation(
     uses(Modelica(version = "4.0.0")),
     __OpenModelica_commandLineOptions = "--matchingAlgorithm=PFPlusExt --indexReductionMethod=dynamicStateSelection -d=initialization,NLSanalyticJacobian",
-    __OpenModelica_simulationFlags(lv = "LOG_STDOUT,LOG_ASSERT,LOG_STATS", s = "cvode", variableFilter = ".*"));
-end conductionKRUSTYRadialDiscExplHeatLoss;
+    __OpenModelica_simulationFlags(lv = "LOG_STDOUT,LOG_ASSERT,LOG_STATS", s = "dassl", variableFilter = ".*"));
+end conductionKRUSTYConservDiscExplHeatLoss;

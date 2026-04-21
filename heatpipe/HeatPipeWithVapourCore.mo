@@ -9,6 +9,9 @@ The effect of this is that, during cold/frozen start-up, there is initially almo
 The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired model.
 
 Note that the melting phase of start-up is neglected as the total enthalpy of fusion is negligible, as also shown here. 
+
+Inputs: Number of heat pipes being modelled together, heat flux into evaporator, condenser/Stirling boundary condition
+Outputs: Evaporator wall temperature, 
 */
   import Modelica.Constants.pi;
 
@@ -184,12 +187,13 @@ Note that the melting phase of start-up is neglected as the total enthalpy of fu
   //----------------------------
   // States
   //----------------------------
-  Real T_monolith (start=300, fixed=true "fuel monolith avg temp [K]"); 
+  Real T_monolith (start=300, fixed=false "fuel monolith avg temp [K]"); 
   Real T_evap (start=300, fixed = true) "evaporator wall temp [K]";
   Real T_wick (start=300, fixed = true) "wick temp (evap) [K]";
   Real T_vap (start=300, fixed = true) "vapour temperature [K]";  
   Real T_cond (start=300, fixed = true) "condenser wall temp [K]";  
-  Real T_Stirling (start=300, fixed = true) "Stirling PCS lumped temperature [K]"; 
+  
+  Real T_Stirling (start=300, fixed = false) "Stirling PCS lumped temperature [K]"; //may need to switch 'fixed' true/false  
   
   Real p_v  "vapour pressure at instantaneous temperature [Pa]";
   Real rho_v "instantaneous vapour density [kg/m3]";  
@@ -241,23 +245,25 @@ Note that the melting phase of start-up is neglected as the total enthalpy of fu
   //----------------------------
   // Inputs
   //----------------------------
+  input Integer N_HPs_input;  
   input Real Q_evap_input;
   input Real Q_cond_input;
   input Real Q_stirling_input;
   Real Q_evap_bc "heat addition rate to evaporator [W]";
   Real Q_cond_bc "heat removal rate from condenser [W]";
   Real Q_Stirling_bc "heat removal rate from Stirling PCS [W]";
+  Real N_HPs;
   
   
   //----------------------------
   // Model options -- these are not intended to be selectable by the FMU handler
   //----------------------------
   //Option to account for heat pipe activation or not 
-  parameter Boolean MODEL_HP_STARTUP = true;
+  parameter Boolean MODEL_HP_STARTUP = false;
   //Option to model the core as a single lump or simply take Q_evap as a boundary condition
-  parameter Boolean MODEL_CORE_INTERNALLY = true; 
+  parameter Boolean MODEL_CORE_INTERNALLY = false; 
   //Give the option to model the thermal mass of the Stirling PCS
-  parameter Boolean MODEL_STIRLING_MASS = true; 
+  parameter Boolean MODEL_STIRLING_MASS = false; 
     
   //----------------------------
   // Latches (flags with persistence)
@@ -304,7 +310,7 @@ equation
     R_vapour_ax = (1 - S)*R_high + S*(R_vapour_ax_posttransition); 
     //R_vapour_ax = (1 - S)*R_high + S*(R_vapour_ax_tr); //the resistance at the transition temp is low enough that it may as well be used throughout.
   else 
-    R_vapour_ax = 1e-6; //stick to some arbitrarily low resistance (short-circuit), reverting to Zuo-Faghri type model 
+    R_vapour_ax = 1e-6; //stick to some arbitrarily low resistance (short-circuit) at all times, reverting to Zuo-Faghri type model 
   end if;
   
   mdot_v = (Q_wv/h_lv);
@@ -323,11 +329,18 @@ equation
   // Heat transfer relations
   //----------------------------
   
+  if N_HPs_input > 0 then
+    N_HPs = N_HPs_input;
+  else 
+    N_HPs = 8;
+  end if; 
+  
+  
   if MODEL_CORE_INTERNALLY then 
     Q_evap_bc = (T_monolith - T_evap)/R_mono_evap;     
   else
-    if Q_evap_input > 0 then 
-      Q_evap_bc = Q_evap_input;
+    if abs(Q_evap_input) > 1E-9 then //need the absolute value in case there is an initially higher temp in the heat pipes than in the core
+      Q_evap_bc = Q_evap_input/N_HPs;
     else 
       Q_evap_bc = Q_cond_nominal;
     end if;
@@ -335,23 +348,23 @@ equation
   
   if MODEL_STIRLING_MASS then 
     Q_cond_bc = 0;
-    if Q_stirling_input > 0 then
-      Q_Stirling_bc = Q_stirling_input;
+    if Q_stirling_input > 1E-9 then
+      Q_Stirling_bc = Q_stirling_input/N_HPs;
     else
       Q_Stirling_bc = HTC_cold*(T_Stirling - T_stirling_cold_nominal); 
       //Q_Stirling_bc = Q_cond_nominal;
       //Q_Stirling_bc = (Q_cond_nominal*8-640)/8; //trigger a load rejection after a long time (t=8h transient: 640 W of load rejection in total)          
     end if;
   else 
-    if Q_cond_input > 0 then 
-      Q_cond_bc = Q_cond_input;
+    if abs(Q_cond_input) > 1E-9 then 
+      Q_cond_bc = Q_cond_input/N_HPs;
     else       
       Q_cond_bc = max(0, HTC*(T_cond - T_stirling_nominal));  //Completely avoid adding heat to the condenser based on this HTC
     end if;
-  end if;
+    Q_Stirling_bc = 0;
+  end if;  
   
-  
-  
+  /*Heat transfer rates*/
   
   // Evaporator->wick
   Q_ew  = (T_evap - T_wick) / R_evap_radial;
@@ -378,7 +391,7 @@ equation
     C_monolith * der(T_monolith) = 2350 - 8*Q_evap_bc;
     //C_monolith * der(T_monolith) = 2350 - 2*Q_evap_bc; //only two Stirling convertors are active at first
   else 
-    T_monolith = 0; //dummy value
+    T_monolith = 0; //placeholder value
   end if; 
   
   // Evaporator with thermal mass of adiabatic section lumped in  
@@ -397,7 +410,7 @@ equation
     
     //latch trigger
     if (T_Stirling > T_stirling_nominal) then       
-      der(STIRLING_ACTIVATED) = 1; 
+      der(STIRLING_ACTIVATED) = 1; //positive derivative that gets integrated to activate the latch
     else       
       der(STIRLING_ACTIVATED) = 0;
     end if;
@@ -409,7 +422,7 @@ equation
     end if;
   else 
     C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
-    T_Stirling = 0; //dummy value
+    T_Stirling = 0; //placeholder value
     
     der(STIRLING_ACTIVATED) = 0; //Don't need the latch in this simplified case. 
   end if; 
