@@ -20,16 +20,16 @@ input Real alpha_Tf_input;
 input Real rho_ext_input "external reactivity, outside input";
 input Real P_0 "initial thermal power [W]";
 
-parameter Real t_exp_onset = 8.*3600 "time at which the transient began during the 28-h run of KRUSTY [s]";
+parameter Real t_exp_onset = 0.; //8.*3600 "time at which the transient began during the 28-h run of KRUSTY [s]";
 parameter Integer nearest_exp_index = findNearestIndex(exp_times, t_exp_onset);
 
 parameter Real alpha_Tf_default = -0.1844*0.01*Beta "fuel TRC, Poston et al"; 
 parameter Real T_fuel_ref_default = 1090 "reference temperature, from steady-state TH solve [K]"; //1091.173; //
 
-parameter Real Lambda = 5.5e-8; //seems very low, but set to match the Wang/Jiang paper. Little impact on gradual transients.
-constant Real Beta = 0.00688; //value directly from KRUSTY papers
-parameter Real betas[6] = {0.037, 0.211, 0.187, 0.407, 0.131, 0.027}*Beta;
-parameter Real lambdas[6] = {0.01273, 0.03175, 0.116, 0.3118, 1.399, 3.876}; //values from KRUSTY papers
+constant Real Lambda = 5.20395e-6; //value from Stolte et al.
+constant Real Beta = 0.00688; //value from Stolte et al.
+parameter Real betas[6] = {0.037, 0.211, 0.187, 0.407, 0.131, 0.027}*Beta; //values from Grove et al.
+parameter Real lambdas[6] = {0.01273, 0.03175, 0.116, 0.3118, 1.399, 3.876}; //values from Grove et al.
 
 parameter Real E_f = 200.0 "Energy release per fission, U235 [MeV]";
 final constant Real lambdas_dh[23] = {

@@ -1,4 +1,4 @@
-model FPSE_Nonlinear_Majidniya
+model FPSE_Nonlinear_Majidniya_FMUexportable
  "Implementation of Majidniya et al. (2019) Eqs. (15)/(16) for the RE-1000 case.
    Uses Table 2 parameter values (converted to SI).
    Implements EXACT algebraic structure of Eq.(15) and Eq.(16) with named intermediates."
@@ -71,8 +71,7 @@ model FPSE_Nonlinear_Majidniya
   parameter Real L_r = 0.0644 "m (Lr 6.44 cm)";
 
   parameter Real d_h_h = 0.2362e-2; //4.*V_h/A_w_h; //0.2362e-2 "m (dh 0.2362 cm -> 0.002362 m)";
-  parameter Real d_h_k = 4.*(V_k/L_k)/(A_w_k/L_k); //d_h_h;
-  //parameter Real d_h_k = A_w_k/pi/L_k; //equivalent formulation of the above
+  parameter Real d_h_k = 4.*V_k/A_w_k; //d_h_h;
   parameter Real d_w = 0.00889e-2 "Wire mesh diameter, m (dw from table 0.00889 cm -> 8.89e-5 m)";
   parameter Real porosity = 0.759; //Also given in table 2
   parameter Real d_h_r = (d_w * porosity)/(1 - porosity);
@@ -93,35 +92,46 @@ model FPSE_Nonlinear_Majidniya
                                          //analytically solved max in closed form 
   parameter Real Vdot_max = abs(A_p*X_p*omega*sin(phi)/sin(atan((A_p*X_p*omega*sin(phi))/(A_p*X_p*omega*cos(phi)-(2*A_d-A_rod)*X_d*omega))));
 
-  // ------------------- STATES -------------------
-  Real x_p(start=X_p*sin(phi)) "power piston displacement (m)"; //Must start with correct phase, X_p*sin(omega*t + phi), t=0  //
-  //Real x_p(start=X_p*sin(-pi/2)) "power piston displacement (m)"; //Try with "perfect" phase
-  //Real v_p(start=X_p*omega*cos(phi)) "power piston velocity (m/s)"; //Need a little kick? //Can use the same trick, analytical derivative
-  Real v_p(start=0.0); //just keep it at 0, better matches the pressure drop from Majidniya et al.
+  parameter Real u_h_max = Vdot_max/A_h;
+  parameter Real u_k_max = Vdot_max/A_k;
+  parameter Real u_r_max = Vdot_max/A_r;
+  
 
-  Real x_d(start=0.0) "displacer displacement (m)";
+  // ------------------- STATES -------------------
+  Real x_p(start=X_p*sin(phi), fixed=true) "power piston displacement (m)"; //Must start with correct phase, X_p*sin(omega*t + phi), t=0  //
+  //Real x_p(start=X_p*sin(-pi/2)) "power piston displacement (m)"; //Try with "perfect" phase
+  
+  //Real v_p(start=0.0, fixed=false); 
+  Real v_p; 
+  //Real v_p(start=X_p*omega*cos(phi)) "power piston velocity (m/s)"; //Need a little kick? //Can use the same trick, analytical derivative
+
+  //Real x_d(start=0.0, fixed=false) "displacer displacement (m)";
+  Real x_d "displacer displacement (m)";
   //Real v_d(start=X_d*omega) "displacer velocity (m/s)";
-  Real v_d(start=0.0);
+  //Real v_d(start=0.0, fixed=false);
+  Real v_d;
 
   // ------------------- Intermediates (named to match paper) -------------------
   Real Vc "compression instantaneous volume";
   Real Ve "expansion instantaneous volume";
   Real Vd "displacer gas-spring instantaneous volume";
   Real Vb "buffer instantaneous volume";
-
-  //Real V_avT "sum term defined in Eq.(7) (units m^3/K)";
-  //Real MR "intermediate MR = m_total * R (paper notation)";
+  
   Real p;
   Real p_b;
   Real p_d;
   
-  Real deltaP(start=0.0) "pressure drop driving displacer (from heat exchanger/regenerator pressure drops)";
+  
+  Real dP_h(start=1.0, fixed=false);   
+  Real dP_k(start=1.0, fixed=false);   
+  Real dP_r(start=1.0, fixed=false); 
+  Real deltaP(start=1.0, fixed=false) "pressure drop driving displacer (from heat exchanger/regenerator pressure drops)";
 
   // For pressure-drop velocity proxies
   //Real Vdot_c, Vdot_e;
-  Real Vdot_flow;
+  Real Vdot_flow(start = 0.01);
   Real u_h, u_k, u_r;  
-  Real u_h_max, u_k_max, u_r_max;
+  //Real u_h_max, u_k_max, u_r_max;
    
   Real Re_h; 
   Real Re_k; 
@@ -129,31 +139,37 @@ model FPSE_Nonlinear_Majidniya
   Real Cf_h "heater Darcy friction factor (tunable)";
   Real Cf_k "cooler Darcy friction factor (tunable)";
   Real Cf_r  "regenerator Darcy friction factor (tunable)";
-  
-  Real dP_h;   
-  Real dP_k;   
-  Real dP_r; 
-
+    
   Real F_load; 
-  Real P_out_mech, E_out_mech, P_mech_avg; 
+  Real P_out_mech;
+  Real E_out_mech (start=0, fixed=true); //this is the integral of power, should definitely start at 0. 
+  Real P_mech_avg; 
 
   //Dynamically calculated densities and viscosities following Majidniya's thesis
   Real rho_h;
   Real rho_k;
   Real rho_r; 
-  Real mu_h;
-  Real mu_k;
-  Real mu_r;
+  
+  //Real mu_h(start=1e-6);
+  //Real mu_k(start=1e-6);
+  //Real mu_r(start=1e-6);  
   
   
-  Real T_h; //Try with time-varying signal
-  Real T_r; //If T_h varies then so does T_r.
-  Real V_avT;     
+  parameter Real mu_k = 3.674*1e-7*T_k^0.7;
+  parameter Real mu_r = 3.674*1e-7*T_r^0.7;
+  parameter Real mu_h = 3.674*1e-7*T_h^0.7;
+  
+  //Real T_h(fixed=false); 
+  parameter Real T_h = T_h_nominal; 
+  //Real T_r(fixed=false); //If T_h varies then so does T_r.
+  parameter Real T_r = (T_h_nominal-T_k)/log(T_h_nominal/T_k) "K (regenerator log-mean used in paper)"; 
+  //Real V_avT (start=4e-7, fixed=false);     
+  parameter Real V_avT = A_p*C_c/T_k + A_d*C_e/T_h + V_h/T_h + V_k/T_k + V_r/T_r;     
   
 equation
-  T_h = 814.3 + 0*time; // + 100*sin(omega*time);
-  T_r = (T_h_nominal-T_k)/log(T_h_nominal/T_k) "K (regenerator log-mean used in paper)";
-  V_avT =  A_p*C_c/T_k + A_d*C_e/T_h + V_h/T_h + V_k/T_k + V_r/T_r;
+  //T_h = 814.3 + 0*time; // + 100*sin(omega*time);  
+  //T_r = (T_h_nominal-T_k)/log(T_h_nominal/T_k) "K (regenerator log-mean used in paper)";
+  //V_avT =  A_p*C_c/T_k + A_d*C_e/T_h + V_h/T_h + V_k/T_k + V_r/T_r;
 
   // ---------- instantaneous geometric volumes (Eqs. 3,4,13,14 in paper) ----------
   // Clearances: Ce, Cc used to set mean volumes (paper notation uses Ce, Cc)
@@ -164,11 +180,9 @@ equation
   Vb = V_B - A_p*x_p;   // buffer instantaneous volume (Eq.13 style)
   Vd = V_D - A_rod*x_d; // displacer gas spring instantaneous volume (Eq.14 style)
 
-  // ---------- VavT and M definitions (Eq.6 & 7 mapping) ----------
-  //MR = p_mean*(Vc/T_k + Ve/T_h + V_h/T_h + V_k/T_k + V_r/T_r);
-  //MR = p_mean*((A_p*C_c)/T_k + (A_d*C_e)/T_h + V_h/T_h + V_k/T_k + V_r/T_r); 
   
-  //p is taken tto be the pressure in the compression volume
+  
+  //p is taken to be the pressure in the compression volume
   p = p_mean*(1 + (A_p*x_p - (A_d - A_rod)*x_d)/(T_k*V_avT) + (A_d*x_d)/(T_h*V_avT) )^(-1) ;
   
   p_b = p_mean*(V_B/Vb)^gamma; //Gas springs, may need slight adjustment
@@ -194,18 +208,15 @@ equation
   */
   //solve using predicted Vdot_max calculated previously
   
-  u_h_max = Vdot_max/A_h;
-  u_k_max = Vdot_max/A_k;
-  u_r_max = Vdot_max/A_r;
-  
+
   
   //friction factors (Cf)     
   rho_k = (48.14*(p + dP_k/2.0)*1e-5)/(T_k*(1 + 0.4446*(p + dP_k/2.0)*1e-5*T_k^(-1.2)));
   rho_r = (48.14*(p + deltaP - dP_r/2.0)*1e-5)/(T_r*(1 + 0.4446*(p + deltaP - dP_r/2.0)*1e-5*T_r^(-1.2)));
   rho_h = (48.14*(p + dP_k + dP_r/2.0)*1e-5)/(T_h*(1 + 0.4446*(p + dP_k + dP_r/2.0)*1e-5*T_h^(-1.2)));
-  mu_k = 3.674*1e-7*T_k^0.7;
-  mu_r = 3.674*1e-7*T_r^0.7;
-  mu_h = 3.674*1e-7*T_h^0.7;
+  //mu_k = 3.674*1e-7*T_k^0.7;
+  //mu_r = 3.674*1e-7*T_r^0.7;
+  //mu_h = 3.674*1e-7*T_h^0.7;
   
   //compute from predicted max flow velocity based on sinusoidal motion   
   /*
@@ -213,9 +224,16 @@ equation
   Re_k = rho_mean*u_k_max*d_h_k/mu;
   Re_r = rho_mean*u_r_max*d_h_r/mu;    
   */
+  
+  /*
   Re_h = rho_h*abs(u_h_max)*d_h_h/mu_h;
   Re_k = rho_k*abs(u_k_max)*d_h_k/mu_k;
   Re_r = rho_r*abs(u_r_max)*d_h_r/mu_r;
+  */
+  
+  Re_h = max(1e-6, rho_h*abs(u_h_max)*d_h_h/mu_h);
+  Re_k = max(1e-6, rho_k*abs(u_k_max)*d_h_k/mu_k);
+  Re_r = max(1e-6, rho_r*abs(u_r_max)*d_h_r/mu_r);
   
   //compute dynamically according to instantaneous local velocity--this approach seems cause damping to zero, for some reason.
   /*
@@ -225,6 +243,7 @@ equation
   */
   if Re_h < 2000 then
     Cf_h = 64/Re_h;
+    
   else    
     Cf_h = 0.316*Re_h^(-0.25); //Assume turbulent conditions for now
   end if;
@@ -271,10 +290,6 @@ equation
   der(x_d) = v_d;  
   der(v_d) = ( A_d*deltaP + A_rod*(p - p_d) - C_d*v_d - K_d*x_d )/ m_d; 
   //der(v_d) = ( A_d*deltaP + (A_d - A_rod)*p - A_rod*p_d  )/ m_d; //wrong!
-
-  // Simple assertions to help catch blow-ups
-  //assert(V_B - A_p * x_p > -0.9*V_B, "Compression volume (V_B - A_p x_p) approaching zero or negative");
-  //assert(V_D - A_rod * x_d > -0.9*V_D, "Displacer-spring volume (V_D - A_rod x_d) approaching zero or negative");
-
+  
   //annotation (experiment(StartTime=0, StopTime=0.15, Tolerance=1e-5, Interval=1e-5));
-end FPSE_Nonlinear_Majidniya;
+end FPSE_Nonlinear_Majidniya_FMUexportable;

@@ -14,6 +14,7 @@ model conductionKRUSTYConservDiscExplHeatLoss
   input Real P_integral_input "Instantaneous integral power [W]";
   input Real T_outer_wall_input "Temperature of heat pipe wall [K]";
   input Real k_input "Conductivity (mean), controlled externally [W/m/K]"; 
+  input Real Q_loss_input "Heat loss out of core, controllable [W]";
   
   // --- Physical Parameters (KRUSTY U-10Mo) ---
   final constant Integer N = 25 "Number of radial shells";
@@ -92,7 +93,7 @@ model conductionKRUSTYConservDiscExplHeatLoss
   parameter Real Q_loss_nominal = 350.0 "nominal heat loss rate through insulation + the rest of the surrounding components, set to agree with experiment";
   parameter Real T_outer_wall_nominal = T_HP_nominal;
   parameter Real T_ambient = 300.0 "ambient temperature";
-  parameter Real HTC_loss = Q_loss_nominal/(T_outer_wall_nominal - T_ambient) "tuned HTC that gives the nominal heat loss [W/K]";
+  parameter Real HTC_loss = Q_loss_nominal/(T_outer_wall_nominal^4 - T_ambient^4) "tuned HTC that gives the nominal heat loss [W/K]";
   parameter Real outer_wall_area = 2*pi*r_outer*L;
   Real Q_outerwall_out;
   //Determine what nominal nuclear heating (fission + decay power) is needed to get the final effective thermal power that we expect at nominal conditions [2350 W after heat losses]
@@ -104,7 +105,7 @@ model conductionKRUSTYConservDiscExplHeatLoss
 initial equation
   for i in 1:N loop
     der(T[i]) = 0;
-  end for;
+  end for;  
 equation
 
   //when sample(0, dt_lag) then
@@ -113,7 +114,13 @@ equation
     T_outer_wall_lagged = pre(T_outer_wall);
   end when;
 
-  Q_loss = HTC_loss*(T_outer_wall - T_ambient); //At zero power, this should drive the temperature down to T_ambient
+  if Q_loss_input > 1E-9 then 
+    Q_loss = Q_loss_input;  
+  elseif Q_loss_input < -1E-9 then 
+    Q_loss = 0;
+  else 
+    Q_loss = HTC_loss*(T_outer_wall^4 - T_ambient^4); //At zero power, this should drive the temperature down to T_ambient
+  end if;
 //  Q_loss = 350.0;
 //P_integral is the actual thermal power to compute the temperature field while accounting for heat loss
   if P_integral_input > 1E-9 then
@@ -122,13 +129,11 @@ equation
     P_integral = P_total_nom*recoverable_power_fraction;
   end if;
   
-  for i in 1:N loop
-//follow radial profile and renormalise to nominal integral power
+  for i in 1:N loop //follow radial profile and renormalise to nominal integral power
     if i < 9./10.*N then
       q_gen_profile[i] = 1;
     else
-      q_gen_profile[i] = 1;
-//1 reverts back to normal profile
+      q_gen_profile[i] = 1; //1 reverts back to normal profile
     end if;
     V_shell[i] = pi*(r_face[i + 1]^2 - r_face[i]^2)*L;
   end for;
@@ -165,7 +170,7 @@ equation
       //Note this only looks like a backward difference, but it's actually forward difference due to indexing shift
     end for;
     // Outer boundary: heat flux based on half-delta-r to boundary and computed heat loss
-    q_flow[N + 1] = -1.*(2/(1/k_correlation(T_lagged[N]) + 1/k_correlation(T_outer_wall_lagged)))*(T_outer_wall - T[N])/(dr/2) + Q_loss/outer_wall_area;
+    q_flow[N + 1] = -1.*(2/(1/k_correlation(T_lagged[N]) + 1/k_correlation(T_outer_wall_lagged)))*(T_outer_wall - T[N])/(dr/2) + Q_loss/outer_wall_area;    
   end if;   
   
 
@@ -182,10 +187,8 @@ equation
   T_mean = sum(T[i]*V_shell[i] for i in 1:N)/fuel_volume;
   
   
-  Q_outerwall_out = q_flow[N + 1]*(2*pi*r_outer*L);
-//Integrated heat flux out of outer wall
-  Q_evap_out = Q_outerwall_out - Q_loss;
-//Outer wall heat flux minus heat loss contribution
+  Q_outerwall_out = q_flow[N + 1]*(2*pi*r_outer*L); //Integrated heat flux out of outer wall
+  Q_evap_out = Q_outerwall_out - Q_loss; //Outer wall heat flux minus heat loss contribution
   annotation(
     uses(Modelica(version = "4.0.0")),
     __OpenModelica_commandLineOptions = "--matchingAlgorithm=PFPlusExt --indexReductionMethod=dynamicStateSelection -d=initialization,NLSanalyticJacobian",

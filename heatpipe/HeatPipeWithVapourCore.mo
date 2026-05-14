@@ -97,9 +97,11 @@ Outputs: Evaporator wall temperature,
   parameter Real V_vcore = A_v_wicked*Le + A_v_unwicked*(La + Lc) "volume of the vapour core [m^3]"; 
 
   parameter Real C_evap_wall = rho_wall * V_wall_e * cp_wall "evaporator wall capacitance [J/K]";
+  //parameter Real C_evap_wall = 0.1*(rho_wall * V_wall_e * cp_wall) "evaporator wall capacitance [J/K]";
   parameter Real C_cond_wall = rho_wall * V_wall_c * cp_wall "condenser wall capacitance [J/K]";
   parameter Real C_wick = rho_wick * cp_wick * V_wick "wick effective capacitance [J/K]";
   parameter Real C_adiab_wall = rho_wall * V_wall_a * cp_wall "adiabatic wall capacitance [J/K]";
+  //parameter Real C_adiab_wall = 0.0 "adiabatic wall capacitance [J/K]";
   
   Real C_vapour "vapour capacitance, a function of instantaneous density/concentration [J/K]"; 
     
@@ -120,6 +122,7 @@ Outputs: Evaporator wall temperature,
   parameter Real R_cond_radial = R_wall_c + R_wick_c;
   
   parameter Real R_wall_axial = (La + 0.5*Le + 0.5*Lc )/(k_wall*pi*(ro_wall^2. - ri_wall^2)) "effective axial thermal resistance of the wall"; 
+  //parameter Real R_wall_axial = 100*(La + 0.5*Le + 0.5*Lc )/(k_wall*pi*(ro_wall^2. - ri_wall^2)) "effective axial thermal resistance of the wall"; 
   
   parameter Real R_wv = 1E-6 "wick-vapour interface resistance";
   
@@ -259,11 +262,11 @@ Outputs: Evaporator wall temperature,
   // Model options -- these are not intended to be selectable by the FMU handler
   //----------------------------
   //Option to account for heat pipe activation or not 
-  parameter Boolean MODEL_HP_STARTUP = false;
+  parameter Boolean MODEL_HP_STARTUP = true;
   //Option to model the core as a single lump or simply take Q_evap as a boundary condition
   parameter Boolean MODEL_CORE_INTERNALLY = false; 
   //Give the option to model the thermal mass of the Stirling PCS
-  parameter Boolean MODEL_STIRLING_MASS = false; 
+  parameter Boolean MODEL_STIRLING_MASS = true; 
     
   //----------------------------
   // Latches (flags with persistence)
@@ -339,11 +342,15 @@ equation
   if MODEL_CORE_INTERNALLY then 
     Q_evap_bc = (T_monolith - T_evap)/R_mono_evap;     
   else
+    /*
     if abs(Q_evap_input) > 1E-9 then //need the absolute value in case there is an initially higher temp in the heat pipes than in the core
+    //if Q_evap_input <> 0 then 
       Q_evap_bc = Q_evap_input/N_HPs;
     else 
       Q_evap_bc = Q_cond_nominal;
     end if;
+    */
+    Q_evap_bc = Q_evap_input/N_HPs;  
   end if;
   
   if MODEL_STIRLING_MASS then 
@@ -394,8 +401,9 @@ equation
     T_monolith = 0; //placeholder value
   end if; 
   
-  // Evaporator with thermal mass of adiabatic section lumped in  
-  (C_evap_wall + C_adiab_wall) * der(T_evap) = Q_evap_bc - Q_ew - Q_ec;
+  // Evaporator 
+  //(C_evap_wall + C_adiab_wall) * der(T_evap) = Q_evap_bc - Q_ew - Q_ec; //with thermal mass of adiabatic section lumped in  
+  C_evap_wall * der(T_evap) = Q_evap_bc - Q_ew - Q_ec;
 
   // Wick
   C_wick * der(T_wick) = Q_ew - Q_wv; //Neglecting axial conductance in the wick
@@ -406,7 +414,8 @@ equation
   
   // Condenser and Stirling PCS
   if MODEL_STIRLING_MASS then    
-    C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cs;    
+    //C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cs;    
+    (C_cond_wall + C_adiab_wall) * der(T_cond) = Q_vc + Q_ec - Q_cs;    
     
     //latch trigger
     if (T_Stirling > T_stirling_nominal) then       
@@ -418,10 +427,11 @@ equation
     if (STIRLING_ACTIVATED > 0) then 
       C_Stirling * der(T_Stirling) = Q_cs - Q_Stirling_bc;       
     else 
-      C_Stirling * der(T_Stirling) = Q_cs; 
+      C_Stirling * der(T_Stirling) = Q_cs; //The Stirling engine can only heat up until it's turned on
     end if;
   else 
-    C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
+    //C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
+    (C_cond_wall + C_adiab_wall) * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
     T_Stirling = 0; //placeholder value
     
     der(STIRLING_ACTIVATED) = 0; //Don't need the latch in this simplified case. 
