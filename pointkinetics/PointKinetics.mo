@@ -18,6 +18,7 @@ input Real rho_ext_input "external reactivity, outside input";
 input Real P_0_input "initial fission power [W]";
 Real P_0;
 input Real P_setpoint_input "desired setpoint for power [W]";
+input Boolean ACTIVE_POWER_CONTROL "Choose whether or not to actively control power using PI controller"; 
 
 parameter Real rho_0 = 0.0e-5 "initial reactivity [pcm]"; 
 parameter Real delta_rho = 9e-5 "amount to increase external reactivity by [pcm]"; 
@@ -54,12 +55,11 @@ function alpha_Tf_poly
     alpha_Tf := (-1.6951E-11*T_fuel^3. + 5.0121E-8*T_fuel^2 - 1.4888E-4*T_fuel -7.9756E-2)*0.01*Beta; //in pcm/K
 end alpha_Tf_poly;
 
-//Values from KRUSTY papers - need to be parameters to be retrievable
-
+//Values from KRUSTY papers - need to be parameters to be retrievable in Python
 constant Real Beta = 0.00688; //from Stolte et al.
 parameter Real betas[6] = {0.037, 0.211, 0.187, 0.407, 0.131, 0.027}*Beta; //from Grove et al.
 parameter Real lambdas[6] = {0.01273, 0.03175, 0.116, 0.3118, 1.399, 3.876}; //from Grove et al.
-constant Real Lambda = 5.20395e-6; //value from Stolte et al.
+constant Real Lambda = 5.20395e-6; //from Stolte et al.
 
 //Values from MOOSE VTB (Serpent outputs)
 /*
@@ -136,58 +136,26 @@ P_max = max(P_max, P_alt); //update the maximum power yet reached
 
 //For running the FMU, need to have a tolerance for these 'less than' conditions since they may otherwise be triggered prematurely.
 when (not pre(PI_active)) and (P_alt - P_setpoint < -10) and (P_alt - P_max < -10) then 
-    PI_active = true; //only activate when not previously set and past the setpoint and past previous max
-    /*
-    Modelica.Utilities.Streams.print("ACTIVATED PI CTRL");
-    Modelica.Utilities.Streams.print("time: " + String(time));
-    Modelica.Utilities.Streams.print("P_alt: " + String(P_alt));
-    Modelica.Utilities.Streams.print("P_setpoint: " + String(P_setpoint));
-    Modelica.Utilities.Streams.print("P_max: " + String(P_max));
-    */
+      PI_active = true; //only activate when not previously set and past the setpoint and past previous max
+      /*
+      Modelica.Utilities.Streams.print("ACTIVATED PI CTRL");
+      Modelica.Utilities.Streams.print("time: " + String(time));
+      Modelica.Utilities.Streams.print("P_alt: " + String(P_alt));
+      Modelica.Utilities.Streams.print("P_setpoint: " + String(P_setpoint));
+      Modelica.Utilities.Streams.print("P_max: " + String(P_max));
+      */
 end when;   
 
-//rho_ext = 0.157*Beta;
-//rho_ext = min(rho_max, (if time >=1000 then 0.157*Beta else 0));
-//rho_ext = min(rho_max, ctrl_out + rho_ext_input);
-//rho_ext = min(rho_max, ctrl_out + (if time >=1000 then 0.157*Beta else 0));
-rho_ext = min(rho_max, ctrl_out + rho_ext_input);
-//rho_ext = rho_cmd;
+
+
+if (ACTIVE_POWER_CONTROL) then 
+  rho_ext = min(rho_max, ctrl_out + rho_ext_input);
+else 
+  rho_ext = rho_ext_input; 
+end if;
+
 rho_cmd =0;
-/*
-//Don't need to model a full PI controller, just need to nudge the reactivity up by a judicious amount.
 
-P_latch_alt = P_alt > P_setpoint;
-
-when sample(0, 0.01) then //sample according to minimum expected timestep - this can slow things down
-  rho_ext_input_d = rho_ext_input;
-end when;
-
-when {initial(),  change(rho_ext_input_d), not(P_latch_alt) and pre(P_latch_alt)} then
-    if initial() then 
-      //rho_cmd = rho_ext_input_d; 
-      //rho_cmd = pre(rho_cmd);
-      rho_cmd = rho_ext_input;
-    // Overwrite
-    elseif change(rho_ext_input_d) then      //elseif rho_ext_input_d > pre(rho_ext_input_d) then
-      //rho_cmd = rho_ext_input_d;
-      rho_cmd = rho_ext_input;
-
-    // Edge-triggered increment
-    elseif (not(P_latch_alt) and pre(P_latch_alt)) then
-      rho_cmd = min(pre(rho_cmd) + delta_rho, rho_max);   
-    else
-      rho_cmd = pre(rho_cmd);
-      //rho_cmd = rho_max;
-    end if;
-
-  //rho_ext = rho_cmd;
-  
-end when;
-
-der(rho_ext) = (rho_cmd - rho_ext)/0.5; //tuned lag
-//rho_ext = rho_cmd;
-
-*/
 
 
 if T_fuel_ref_input > 1e-9 then

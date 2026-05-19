@@ -266,7 +266,7 @@ Outputs: Evaporator wall temperature,
   //Option to model the core as a single lump or simply take Q_evap as a boundary condition
   parameter Boolean MODEL_CORE_INTERNALLY = false; 
   //Give the option to model the thermal mass of the Stirling PCS
-  parameter Boolean MODEL_STIRLING_MASS = true; 
+  parameter Boolean MODEL_STIRLING_MASS = false; 
     
   //----------------------------
   // Latches (flags with persistence)
@@ -402,8 +402,8 @@ equation
   end if; 
   
   // Evaporator 
-  //(C_evap_wall + C_adiab_wall) * der(T_evap) = Q_evap_bc - Q_ew - Q_ec; //with thermal mass of adiabatic section lumped in  
-  C_evap_wall * der(T_evap) = Q_evap_bc - Q_ew - Q_ec;
+  (C_evap_wall + C_adiab_wall) * der(T_evap) = Q_evap_bc - Q_ew - Q_ec; //with thermal mass of adiabatic section lumped in  
+  //C_evap_wall * der(T_evap) = Q_evap_bc - Q_ew - Q_ec;
 
   // Wick
   C_wick * der(T_wick) = Q_ew - Q_wv; //Neglecting axial conductance in the wick
@@ -430,8 +430,8 @@ equation
       C_Stirling * der(T_Stirling) = Q_cs; //The Stirling engine can only heat up until it's turned on
     end if;
   else 
-    //C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
-    (C_cond_wall + C_adiab_wall) * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
+    C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
+    //(C_cond_wall + C_adiab_wall) * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
     T_Stirling = 0; //placeholder value
     
     der(STIRLING_ACTIVATED) = 0; //Don't need the latch in this simplified case. 
