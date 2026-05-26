@@ -6,6 +6,9 @@ This is the same general approach used in FRINK, though the exact implementation
 This model uses the TRACE implementation (see TRACE V5 theory manual) with input data 
 from the ANS Standard for Decay Heat (1979). The U235 data is used with a slight correction factor.
 
+This model also allows for reactivity control based on power and temperature setpoints, as needed to replicate
+the full KRUSTY startup procedure.
+
 Inputs: Fuel temperature (average, T_Fuel), external reactivity (rho_ext)
 Outputs: Total thermal power (P_tot), fission power (P_fiss), decay power (P_dec) 
 
@@ -16,20 +19,33 @@ recompiled for each power history case.
 "
 input Real T_fuel_ref_input;
 input Real T_fuel_input "Average fuel temperature, obtained from external solver";
-input Real alpha_Tf_input; 
+input Real T_fuel_outer_input "Outer wall fuel temperature, used for control purposes"; 
+//input Real alpha_Tf_input; 
 input Real rho_ext_input "external reactivity, outside input";
-input Real P_0 "initial thermal power [W]";
+input Real P_0_input "initial thermal power [W]";
 
-parameter Real t_exp_onset = 0.; //8.*3600 "time at which the transient began during the 28-h run of KRUSTY [s]";
+input Real P_setpoint_input "desired setpoint for power [W]";
+input Boolean ACTIVE_POWER_CONTROL "Choose whether or not to actively control power using PI controller"; 
+input Real rho_max_input;
+input Real T_setpoint_input "desired setpoint for fuel temperature [K]";
+
+//These parameters allow the actual KRUSTY power history to be set. 
+parameter Real t_exp_onset = 8.*3600; //0. //8.*3600 "time at which the transient began during the 28-h run of KRUSTY [s]";
 parameter Integer nearest_exp_index = findNearestIndex(exp_times, t_exp_onset);
 
-parameter Real alpha_Tf_default = -0.1844*0.01*Beta "fuel TRC, Poston et al"; 
-parameter Real T_fuel_ref_default = 1090 "reference temperature, from steady-state TH solve [K]"; //1091.173; //
+//Values from KRUSTY papers - need to be parameters to be retrievable in Python
+constant Real Beta = 0.00688; //from Stolte et al.
+parameter Real betas[6] = {0.037, 0.211, 0.187, 0.407, 0.131, 0.027}*Beta; //from Grove et al.
+parameter Real lambdas[6] = {0.01273, 0.03175, 0.116, 0.3118, 1.399, 3.876}; //from Grove et al.
+constant Real Lambda = 5.20395e-6; //from Stolte et al.
 
-constant Real Lambda = 5.20395e-6; //value from Stolte et al.
-constant Real Beta = 0.00688; //value from Stolte et al.
-parameter Real betas[6] = {0.037, 0.211, 0.187, 0.407, 0.131, 0.027}*Beta; //values from Grove et al.
-parameter Real lambdas[6] = {0.01273, 0.03175, 0.116, 0.3118, 1.399, 3.876}; //values from Grove et al.
+//Values from MOOSE VTB (Serpent outputs)
+/*
+constant Real Beta = sum(betas); 
+constant Real betas[6] = {23.06, 118.77, 115.32, 324.70, 96.07, 33.82}*1e-5;
+constant Real lambdas[6] = {0.0125, 0.0318, 0.1094, 0.3173, 1.3529, 8.6655};
+constant Real Lambda = 5.31603e-6; 
+*/
 
 parameter Real E_f = 200.0 "Energy release per fission, U235 [MeV]";
 final constant Real lambdas_dh[23] = {
@@ -535,11 +551,20 @@ function computeICsFromPowerHistory
 end computeICsFromPowerHistory;
 
 Real rho_ext; 
-Real T_fuel; 
+Real rho_max;
+Real T_fuel "Mean fuel temperature, used for computing feedback reactivity [K]";
+Real T_fuel_outer "Outer wall fuel temperature, used to compare with control setpoint [K]";
 Real rho "instantaneous net reactivity";
 Real rho_fb "reactivity feedback";
 Real alpha_Tf;
 Real T_fuel_ref;
+parameter Real alpha_Tf_default = -0.1844*0.01*Beta "fuel TRC, Poston et al"; 
+parameter Real T_fuel_ref_default = 1090 "reference temperature, from steady-state TH solve [K]"; //1091.173; //
+
+Real P_setpoint; 
+Real P_max ;
+Real T_setpoint;  //temperature setpoint of outer wall temperature
+Real rho_ext_Tset(start=1, fixed=true); 
 
 Real Cs[6] "instaneous group-wise precursor power [W] "; 
 Real Hs[23] "decay heat precursor energy [J]";
@@ -549,11 +574,24 @@ output Real P_fiss "instantaneous fission power";
 output Real P_dec "instantaneous decay heat power";
 output Real P_tot "total instantaneous thermal power";
 
+//PI controller variables
+input Real K_p_input;
+input Real K_i_input;
+Real K_p; 
+Real K_i;
+Boolean PI_active(start=false, fixed=true);
+Real ctrl_out ;
+Real ctrl_error ;
+Real ctrl_error_integral(start=0, fixed=true);
+
+Boolean TEMP_SET_REACHED(start=false, fixed=true);
+
+
 initial equation
 
 /*
 It's currently not possible to set an externally defined input for the time history cutoff, since this would require resizing of the history arrays 
-during simulation---not allowed by Modelica. Normally, an FMU should allow the parameters to be set, which would be fine, but have seen
+during simulation (not allowed by Modelica). Normally, an FMU should allow the parameters to be set, which would work fine, but have seen
 that this doesn't work with OpenModelica. The solution is then to recompile an FMU for each power history case. 
 */
 
@@ -564,8 +602,8 @@ if t_exp_onset > 0 then
 else //take a negative parameter input as implying infinite power history
   betas/Lambda*P_fiss = lambdas.*Cs;
   E_fracs*P_fiss = lambdas_dh.*Hs ;  
-  if P_0 > 0 then 
-    P_tot = P_0;
+  if P_0_input > 0 then 
+    P_tot = P_0_input;
   else 
     P_tot = 3000.0;
   end if;
@@ -575,13 +613,13 @@ end if;
 equation
 
 
-if T_fuel_ref_input > 1e-6 then
+if T_fuel_ref_input > 1E-9 then
   T_fuel_ref = T_fuel_ref_input;
 else
   T_fuel_ref = T_fuel_ref_default;
 end if;
 
-if T_fuel_input > 1e-6 then
+if T_fuel_input > 1E-9 then
   T_fuel = T_fuel_input;
   alpha_Tf = alpha_Tf_poly(T_fuel);
 else
@@ -589,10 +627,76 @@ else
   alpha_Tf = alpha_Tf_poly(T_fuel_ref);
 end if;
 
-if rho_ext_input > 0 then
+/*
+if rho_ext_input > 1E-9 then
   rho_ext = rho_ext_input;
 else 
   rho_ext = 0.0;
+end if;
+*/
+
+if P_setpoint_input > 1E-9 then 
+  P_setpoint = P_setpoint_input;
+else
+  P_setpoint = 3000;
+end if;
+
+if T_setpoint_input > 1E-9 then 
+  T_setpoint = T_setpoint_input;
+else 
+  T_setpoint = 1E8; //set an arbitarily high setpoint so this mode of control won't be triggered accidentally.
+end if;
+
+if T_fuel_outer_input > 1E-9 then 
+  T_fuel_outer = T_fuel_outer_input;
+else 
+  T_fuel_outer = 1073.15; 
+end if; 
+
+//PI controller - power
+if K_p_input > 1E-9 and K_i_input > 1E-9 then 
+  K_p = K_p_input;
+  K_i = K_i_input;
+else
+  K_p = 0.02; //0.2; //Proportional gain
+  K_i = 0.;//K_p/100.; //Integral gain
+end if; 
+
+ctrl_error = if PI_active then (P_setpoint - P_fiss) else 0; //Not sure whether to use P_tot or P_fiss for reactivity control 
+der(ctrl_error_integral) = if PI_active and T_fuel_outer - T_setpoint < 5.0 then ctrl_error else 0; //stop integrating the error
+
+ctrl_out = K_p*ctrl_error + K_i*ctrl_error_integral; 
+
+P_max = max(P_max, P_fiss); //update the maximum power yet reached
+
+//For running the FMU, need to have a tolerance for these 'less than' conditions since they may otherwise be triggered prematurely.
+when (not pre(PI_active)) and (P_fiss - P_setpoint < -10) and (P_fiss - P_max < -10) then 
+      PI_active = true; //only activate when not previously set and falls below the setpoint and is below the previous max      
+      Modelica.Utilities.Streams.print("ACTIVATED PI CTRL");
+      Modelica.Utilities.Streams.print("time: " + String(time));
+      Modelica.Utilities.Streams.print("P_fiss: " + String(P_fiss));
+      Modelica.Utilities.Streams.print("P_tot: " + String(P_tot));
+      Modelica.Utilities.Streams.print("P_setpoint: " + String(P_setpoint));
+      Modelica.Utilities.Streams.print("P_max: " + String(P_max));
+end when; 
+
+when (not pre(TEMP_SET_REACHED)) and (T_fuel_outer - T_setpoint > 0.1) then
+  TEMP_SET_REACHED = true; //only activate when not previously set and the temperature rises above the setpoint
+  rho_ext_Tset = rho_ext;
+  Modelica.Utilities.Streams.print("SET NEW MAX REACTIVITY");
+  Modelica.Utilities.Streams.print("rho_ext_Tset: " + String(rho_ext_Tset));  
+end when;
+
+if rho_max_input > 1E-9 then  
+  rho_max = rho_max_input;
+else 
+  rho_max = 0.299*Beta;
+end if;
+
+if (ACTIVE_POWER_CONTROL) then  
+  rho_ext = min( min(rho_max, ctrl_out + rho_ext_input) , rho_ext_Tset); 
+else 
+  rho_ext = rho_ext_input; 
 end if;
 
 rho_fb = alpha_Tf*(T_fuel - T_fuel_ref); 

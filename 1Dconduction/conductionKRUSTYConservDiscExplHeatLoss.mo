@@ -15,7 +15,7 @@ model conductionKRUSTYConservDiscExplHeatLoss
   input Real T_outer_wall_input "Temperature of heat pipe wall [K]";
   input Real k_input "Conductivity (mean), controlled externally [W/m/K]"; 
   input Real Q_loss_input "Heat loss out of core, controllable [W]";
-  input Boolean START_COLD_INPUT "Start at uniform room temeperature (fixed, Dirichlet), in case of coupled startup simulation";  
+  input Boolean START_COLD "Start at uniform room temeperature (fixed, Dirichlet), in case of coupled startup simulation";  
   input Boolean FORCE_OUTERWALL_ADIABATIC "Force an adiabatic boundary condition in the outer wall (in addition to inner)"; 
   
   // --- Physical Parameters (KRUSTY U-10Mo) ---
@@ -65,7 +65,7 @@ model conductionKRUSTYConservDiscExplHeatLoss
   end rho_correlation;
 
   // --- Heat Pipe / Boundary Parameters ---
-  parameter Real T_HP_nominal = 1073.15 "Fixed HP temperature for steady-state [K]";
+  parameter Real T_HP_nominal = 800 + 273.15 "Fixed HP temperature for steady-state [K]";
   parameter Integer n_hp = 8 "Number of heat pipes";
   Real Q_loss "Heat lost through MLI [W], to be computed";
   Real P_integral;
@@ -98,8 +98,7 @@ model conductionKRUSTYConservDiscExplHeatLoss
   Real verified_power_integral;
   output Real Q_evap_out(start=1, fixed=false) "Heat flow out of heat pipe wall [W]";
   output Real T_mean "Volume-weighted mean temperature [K]";
-  parameter Real recoverable_power_fraction = 0.93703;
-  //Near-field heating fraction as per "KRUSTY Reactor Design" paper
+  parameter Real recoverable_power_fraction = 0.93703;  //Near-field heating fraction as per "KRUSTY Reactor Design" paper
   parameter Real Q_loss_nominal = 350.0 "nominal heat loss rate through insulation + the rest of the surrounding components, set to agree with experiment";
   parameter Real T_outer_wall_nominal = T_HP_nominal;
   parameter Real T_ambient = 300.0 "ambient temperature";
@@ -114,7 +113,7 @@ model conductionKRUSTYConservDiscExplHeatLoss
   
   
 initial equation
-  if (not START_COLD_INPUT) then 
+  if (not START_COLD) then 
     for i in 1:N loop
       der(T[i]) = 0;      
     end for;      
@@ -220,10 +219,17 @@ equation
   q_gen[N] = q_gen_profile[N]/power_profile_integral*P_integral; //update q_gen  
   //rho_correlation(T[N])*cp_correlation(T[N])*der(T[N]) = ((2*pi*r_face[N]*L)*q_flow[N] - outer_wall_area*q_flow[N + 1])/V_shell[N] + q_gen[N];
   //A_hp_eff = A_hp_eff_nominal;  
-  A_hp_eff = 0.01*A_hp_eff_nominal + (A_hp_eff_nominal - 0.01*A_hp_eff_nominal) / (1 + exp(-(T[N] - 600) / 50)); //temp-dependant effective area (contact resistance)
+  
+  //Works for warm-critical transients. Lowering the transition temp to e.g. 400 gives a noticeably worse power peak result.
+  //For the full cold startup, this transition should be below the heat pipe transition temperature (~700 K) or else the latter will be pointless
+  A_hp_eff = 0.001*A_hp_eff_nominal + (A_hp_eff_nominal - 0.001*A_hp_eff_nominal) / (1 + exp(-(T[N] - 600) / 50)); //temp-dependant effective area (contact resistance)
+  
+  
   rho_correlation(T[N])*cp_correlation(T[N])*der(T[N]) = ((2*pi*r_face[N]*L)*q_flow[N] - A_hp_eff*q_flow[N + 1])/V_shell[N] + q_gen[N] - Q_loss/V_shell[N]; //using the proper heat pipe area which will give a bigger delta T. 
   //Q_outerwall_out = q_flow[N + 1]*outer_wall_area; 
-  Q_outerwall_out = q_flow[N + 1]*outer_wall_area + Q_loss; //Integrated heat flux out of the entire outer outer wall
+  
+  //Q_outerwall_out = q_flow[N + 1]*outer_wall_area + Q_loss; //Integrated heat flux out of the entire outer surface
+  Q_outerwall_out = q_flow[N + 1]*A_hp_eff + Q_loss; //Integrated heat flux out of the entire outer outer wall (hp walls + the rest) 
     
   //outputs
   verified_power_integral = sum(q_gen[i]*V_shell[i] for i in 1:N);

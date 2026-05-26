@@ -105,7 +105,8 @@ Outputs: Evaporator wall temperature,
   
   Real C_vapour "vapour capacitance, a function of instantaneous density/concentration [J/K]"; 
     
-  parameter Real C_Stirling = 3*C_cond_wall "Estimated/tuned Stirling capacitance [J/K]"; 
+  //The Stirling capacitance is tuned based on Fig. 10 of Poston et al. It should have the same initial temperature drop once the heat rmeoval is activated.
+  parameter Real C_stirling = 15*C_cond_wall "Stirling capacitance [J/K]"; 
 
   //----------------------------
   // Resistances  
@@ -129,8 +130,8 @@ Outputs: Evaporator wall temperature,
   Real R_vapour_ax "Axial resistance of the vapour core, dependent on vapour pressure and flow transition"; 
   
   parameter Real Q_cond_nominal = 2350/8;
-  parameter Real R_stirling_hp_interface = 165/Q_cond_nominal;
-  parameter Real T_stirling_nominal = 630 + 273.15 "Stirling hot-side temperature, Poston et al., Fig. 10 [K]"; 
+  parameter Real R_stirling_hp_interface = 145/Q_cond_nominal; //165/Q_cond_nominal;
+  parameter Real T_stirling_nominal = 650 + 273.15 "Stirling hot-side temperature, Poston et al., Fig. 10 [K]"; //630 + 273.15
   parameter Real T_cond_nominal = T_stirling_nominal + Q_cond_nominal*R_stirling_hp_interface; 
   parameter Real HTC = Q_cond_nominal/(T_cond_nominal - T_stirling_nominal);
   
@@ -140,7 +141,6 @@ Outputs: Evaporator wall temperature,
   //----------------------------
   // Helper correlation functions
   //----------------------------
-  
   /*vapour pressure correlation*/
   function pv_correlation
     input Real T "Temperature [K]";    
@@ -196,7 +196,7 @@ Outputs: Evaporator wall temperature,
   Real T_vap (start=300, fixed = true) "vapour temperature [K]";  
   Real T_cond (start=300, fixed = true) "condenser wall temp [K]";  
   
-  Real T_Stirling (start=300, fixed = false) "Stirling PCS lumped temperature [K]"; //may need to switch 'fixed' true/false  
+  Real T_stirling (start=300, fixed = false) "Stirling PCS lumped temperature [K]"; //may need to switch 'fixed' true/false  
   
   Real p_v  "vapour pressure at instantaneous temperature [Pa]";
   Real rho_v "instantaneous vapour density [kg/m3]";  
@@ -254,24 +254,25 @@ Outputs: Evaporator wall temperature,
   input Real Q_stirling_input;
   Real Q_evap_bc "heat addition rate to evaporator [W]";
   Real Q_cond_bc "heat removal rate from condenser [W]";
-  Real Q_Stirling_bc "heat removal rate from Stirling PCS [W]";
+  Real Q_stirling_bc "heat removal rate from Stirling PCS [W]";
   Real N_HPs;
   
   
   //----------------------------
-  // Model options -- these are not intended to be selectable by the FMU handler
+  // Model options -- these are not intended to be selectable by the FMU handler, but baked-in at compilation
   //----------------------------
   //Option to account for heat pipe activation or not 
   parameter Boolean MODEL_HP_STARTUP = true;
   //Option to model the core as a single lump or simply take Q_evap as a boundary condition
   parameter Boolean MODEL_CORE_INTERNALLY = false; 
   //Give the option to model the thermal mass of the Stirling PCS
-  parameter Boolean MODEL_STIRLING_MASS = false; 
+  parameter Boolean MODEL_STIRLING_MASS = true; 
     
   //----------------------------
   // Latches (flags with persistence)
   //----------------------------
-  Real STIRLING_ACTIVATED (start=0, fixed=true);
+  //Real STIRLING_ACTIVATED (start=0, fixed=true);
+  Boolean STIRLING_ACTIVATED(start=false,fixed=true); //changed to a flag using 'when' statement.
     
   //----------------------------
   // Outputs / signals
@@ -350,17 +351,22 @@ equation
       Q_evap_bc = Q_cond_nominal;
     end if;
     */
-    Q_evap_bc = Q_evap_input/N_HPs;  
+    Q_evap_bc = Q_evap_input/N_HPs;  //must be allowed to cross zero and go negative 
   end if;
   
   if MODEL_STIRLING_MASS then 
     Q_cond_bc = 0;
     if Q_stirling_input > 1E-9 then
-      Q_Stirling_bc = Q_stirling_input/N_HPs;
+      Q_stirling_bc = Q_stirling_input/N_HPs;
     else
-      Q_Stirling_bc = HTC_cold*(T_Stirling - T_stirling_cold_nominal); 
-      //Q_Stirling_bc = Q_cond_nominal;
-      //Q_Stirling_bc = (Q_cond_nominal*8-640)/8; //trigger a load rejection after a long time (t=8h transient: 640 W of load rejection in total)          
+      if STIRLING_ACTIVATED then 
+        Q_stirling_bc = HTC_cold*(T_stirling - T_stirling_cold_nominal);
+        //Q_stirling_bc = 2350/8;
+      else 
+        Q_stirling_bc = 0;
+      end if;
+      //Q_stirling_bc = Q_cond_nominal;
+      //Q_stirling_bc = (Q_cond_nominal*8-640)/8; //trigger a load rejection after a long time (t=8h transient: 640 W of load rejection in total)          
     end if;
   else 
     if abs(Q_cond_input) > 1E-9 then 
@@ -368,7 +374,7 @@ equation
     else       
       Q_cond_bc = max(0, HTC*(T_cond - T_stirling_nominal));  //Completely avoid adding heat to the condenser based on this HTC
     end if;
-    Q_Stirling_bc = 0;
+    Q_stirling_bc = 0;
   end if;  
   
   /*Heat transfer rates*/
@@ -387,7 +393,7 @@ equation
   Q_ec = (T_evap - T_cond) / R_wall_axial;
   
   // Condenser->Stirling 
-  Q_cs = (T_cond - T_Stirling) / R_stirling_hp_interface; //thermal resistance according to prescribed nominal DeltaT
+  Q_cs = (T_cond - T_stirling) / R_stirling_hp_interface; //thermal resistance according to prescribed nominal DeltaT
 
   //----------------------------
   // Energy balances
@@ -412,29 +418,39 @@ equation
   C_vapour = rho_v*cp_v*V_vcore; //Update vapour capacitance based on density (rarefied/continuous state)
   C_vapour * der(T_vap) = Q_wv - Q_vc;
   
+  when MODEL_STIRLING_MASS and T_stirling > T_stirling_nominal then 
+    STIRLING_ACTIVATED = true;
+    Modelica.Utilities.Streams.print("Stirling engine activated!");
+  end when;
+  
   // Condenser and Stirling PCS
   if MODEL_STIRLING_MASS then    
-    //C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cs;    
-    (C_cond_wall + C_adiab_wall) * der(T_cond) = Q_vc + Q_ec - Q_cs;    
+    C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cs;    
+    //(C_cond_wall + C_adiab_wall) * der(T_cond) = Q_vc + Q_ec - Q_cs;    
     
+    /*
     //latch trigger
-    if (T_Stirling > T_stirling_nominal) then       
+    if (T_stirling > T_stirling_nominal) then       
       der(STIRLING_ACTIVATED) = 1; //positive derivative that gets integrated to activate the latch
     else       
       der(STIRLING_ACTIVATED) = 0;
     end if;
-    
-    if (STIRLING_ACTIVATED > 0) then 
-      C_Stirling * der(T_Stirling) = Q_cs - Q_Stirling_bc;       
+    */
+      
+    /*
+    if (STIRLING_ACTIVATED) then //The Stirling engine can only heat up until it's turned on
+      C_stirling * der(T_stirling) = Q_cs - Q_stirling_bc;       
     else 
-      C_Stirling * der(T_Stirling) = Q_cs; //The Stirling engine can only heat up until it's turned on
+      C_stirling * der(T_stirling) = Q_cs; 
     end if;
+    */
+    C_stirling * der(T_stirling) = Q_cs - Q_stirling_bc; //Q will jump from zero when the engine is turned on . 
   else 
     C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
     //(C_cond_wall + C_adiab_wall) * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
-    T_Stirling = 0; //placeholder value
+    T_stirling = 0; //placeholder value
     
-    der(STIRLING_ACTIVATED) = 0; //Don't need the latch in this simplified case. 
+    //der(STIRLING_ACTIVATED) = 0; //Don't need the latch in this simplified case. 
   end if; 
   
   
