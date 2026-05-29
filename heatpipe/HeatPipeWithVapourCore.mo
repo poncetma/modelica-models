@@ -129,14 +129,16 @@ Outputs: Evaporator wall temperature,
   
   Real R_vapour_ax "Axial resistance of the vapour core, dependent on vapour pressure and flow transition"; 
   
-  parameter Real Q_cond_nominal = 2350/8;
-  parameter Real R_stirling_hp_interface = 145/Q_cond_nominal; //165/Q_cond_nominal;
+  parameter Real Q_draw_nominal = 2350/8 "nominal power draw [W]";
+  parameter Real R_stirling_hp_interface = 145/Q_draw_nominal; //165/Q_cond_nominal;
+  parameter Real T_stirling_activation = 650 + 273.15 "Temperature at which Stirlings are turned on in start-up run of KRUSTY"; 
   parameter Real T_stirling_nominal = 650 + 273.15 "Stirling hot-side temperature, Poston et al., Fig. 10 [K]"; //630 + 273.15
-  parameter Real T_cond_nominal = T_stirling_nominal + Q_cond_nominal*R_stirling_hp_interface; 
-  parameter Real HTC = Q_cond_nominal/(T_cond_nominal - T_stirling_nominal);
+  parameter Real T_cond_nominal = T_stirling_nominal + Q_draw_nominal*R_stirling_hp_interface; 
+  
+  parameter Real HTC = Q_draw_nominal/(T_cond_nominal - T_stirling_nominal);
   
   parameter Real T_stirling_cold_nominal  = 65 + 273.15; 
-  parameter Real HTC_cold = Q_cond_nominal/(T_stirling_nominal - T_stirling_cold_nominal);
+  parameter Real HTC_cold = Q_draw_nominal/(T_stirling_nominal - T_stirling_cold_nominal);
   
   //----------------------------
   // Helper correlation functions
@@ -186,15 +188,49 @@ Outputs: Evaporator wall temperature,
     rho := (0.927 - 0.238E-3*(T-273.15-100))*1000.; 
   end rho_l_correlation;  
   
+  /*************/
+  /*Power throughput limit correlations (flooding limit, viscous limit)*/
+  /*************/
+  //Data from Poston et al. (emperical model), Fig. 7
+  function viscous_limit
+    input Real T "Sodium temperature [K]"; 
+    output Real Q_max "Power limit [W]";
+    protected Real T_c;
+  algorithm
+    T_c := T - 273.15; 
+    if T_c > 400. then //Restrict to range of validity
+      //Q_max := 1.068E-07*exp(0.03991*T_c); //own correlation from digitised data (R^2=0.993)
+      Q_max := 8.441E-53*T_c^(1.994E+1); //own correlation from digitised data (R^2 = 0.9990)
+    else
+      //Q_max := 1.068E-07*exp(0.03991*400.); //Evaluate at lowest bound
+      //Q_max := 8.441E-53*400^(1.994E+1); //Evaluate at lowest bound
+      Q_max := 8.441E-53*T_c^(1.994E+1); //Extroplate
+    end if; 
+    
+  end viscous_limit;
+  
+  function flooding_limit
+    input Real T "Sodium temperature [K]"; 
+    output Real Q_max "Power limit [W]";
+    protected Real T_c;
+  algorithm
+    T_c := T - 273.15; 
+    if T_c > 400.0 then 
+      Q_max := 3.404E-3*T_c^2. -2.202*T_c + 3.800E+2; //own correlation from digitised data (R^2 = 0.9999)
+    else
+      //Q_max := 3.404E-3*400.^2. -2.202*400. + 3.800E+2; //Evaluated at lowest bound
+      Q_max := 3.404E-3*T_c^2. -2.202*T_c + 3.800E+2; //Extrapolate
+    end if; 
+  end flooding_limit;
   
   //----------------------------
   // States
   //----------------------------
   Real T_monolith (start=300, fixed=false "fuel monolith avg temp [K]"); 
-  Real T_evap (start=300, fixed = true) "evaporator wall temp [K]";
-  Real T_wick (start=300, fixed = true) "wick temp (evap) [K]";
-  Real T_vap (start=300, fixed = true) "vapour temperature [K]";  
-  Real T_cond (start=300, fixed = true) "condenser wall temp [K]";  
+  Real T_evap  "evaporator wall temp [K]";
+  Real T_wick  "wick temp (evap) [K]";
+  Real T_vap  "vapour temperature [K]";  
+  Real T_cond  "condenser wall temp [K]";  
   
   Real T_stirling (start=300, fixed = false) "Stirling PCS lumped temperature [K]"; //may need to switch 'fixed' true/false  
   
@@ -242,7 +278,7 @@ Outputs: Evaporator wall temperature,
   Real Q_wv "wick->vapour";
   Real Q_vc "vapour->condenser";  
   Real Q_ec "evaporator->condenser";
-  Real Q_cs "condenser->Stirling CPS";
+  output Real Q_cs "condenser->Stirling CPS";
   Real R_vc "combined thermal resistance from vapour to condenser"; 
   
   //----------------------------
@@ -251,10 +287,12 @@ Outputs: Evaporator wall temperature,
   input Integer N_HPs_input;  
   input Real Q_evap_input;
   input Real Q_cond_input;
-  input Real Q_stirling_input;
+  input Real Q_stirling_input; //if modelled internally
+  input Real T_stirling_input; //if modelled externally
+  
   Real Q_evap_bc "heat addition rate to evaporator [W]";
   Real Q_cond_bc "heat removal rate from condenser [W]";
-  Real Q_stirling_bc "heat removal rate from Stirling PCS [W]";
+  Real Q_stirling_bc "heat removal rate from Stirling PCS [W]"; 
   Real N_HPs;
   
   
@@ -265,8 +303,12 @@ Outputs: Evaporator wall temperature,
   parameter Boolean MODEL_HP_STARTUP = true;
   //Option to model the core as a single lump or simply take Q_evap as a boundary condition
   parameter Boolean MODEL_CORE_INTERNALLY = false; 
-  //Give the option to model the thermal mass of the Stirling PCS
-  parameter Boolean MODEL_STIRLING_MASS = true; 
+  //Option to model the thermal mass of the Stirling PCS
+  parameter Boolean MODEL_STIRLING = true; 
+  parameter Boolean MODEL_STIRLING_ACTIVATION = true;
+  //Follow-up option to do so internally or via an external FMU 
+  parameter Boolean MODEL_STIRLING_INTERNALLY = false; 
+  
     
   //----------------------------
   // Latches (flags with persistence)
@@ -283,6 +325,25 @@ Outputs: Evaporator wall temperature,
   Real v_v "vapour velocity [m/s]" ;
   Real mdot_v "vapour mass flow rate [kg/s]";
   Real Re; 
+  
+  Real Q_lim_viscous; 
+  Real Q_lim_flood; 
+
+initial equation 
+
+if MODEL_HP_STARTUP then //change the starting conditions to speed up convergence to steady-state in pseudotransient, full power cases
+  T_evap = 15 + 273.15;
+  T_wick = 15 + 273.15;
+  T_vap = 15 + 273.15;
+  T_cond = 15 + 273.15;
+  T_stirling = 15 + 273.15;
+else 
+  T_evap = 1073.15;
+  T_wick = 1073.15;
+  T_vap = 1073.15;
+  T_cond = 1073.15;
+  T_stirling = T_stirling_nominal;
+end if;
 
 equation
   cp_v = cp_v_correlation(T_vap);
@@ -354,12 +415,13 @@ equation
     Q_evap_bc = Q_evap_input/N_HPs;  //must be allowed to cross zero and go negative 
   end if;
   
-  if MODEL_STIRLING_MASS then 
+  if MODEL_STIRLING then 
     Q_cond_bc = 0;
-    if Q_stirling_input > 1E-9 then
+    
+    if MODEL_STIRLING_INTERNALLY and Q_stirling_input > 1E-9 then
       Q_stirling_bc = Q_stirling_input/N_HPs;
     else
-      if STIRLING_ACTIVATED then 
+      if MODEL_STIRLING_INTERNALLY and STIRLING_ACTIVATED then 
         Q_stirling_bc = HTC_cold*(T_stirling - T_stirling_cold_nominal);
         //Q_stirling_bc = 2350/8;
       else 
@@ -368,6 +430,7 @@ equation
       //Q_stirling_bc = Q_cond_nominal;
       //Q_stirling_bc = (Q_cond_nominal*8-640)/8; //trigger a load rejection after a long time (t=8h transient: 640 W of load rejection in total)          
     end if;
+    
   else 
     if abs(Q_cond_input) > 1E-9 then 
       Q_cond_bc = Q_cond_input/N_HPs;
@@ -387,14 +450,18 @@ equation
 
   // Vapor->condenser 
   R_vc = max(R_cond_radial, R_cond_radial + R_vapour_ax);   
-  Q_vc = (T_vap - T_cond) / R_vc;  
+  
+  Q_lim_viscous = viscous_limit(T_vap);
+  Q_lim_flood = flooding_limit(T_vap);
+  //Q_vc = (T_vap - T_cond) / R_vc;  
+  Q_vc = min(Q_lim_flood, min(Q_lim_viscous, (T_vap - T_cond) / R_vc));  //Impose physical throughput limits
   
   // Evaporator->condenser
   Q_ec = (T_evap - T_cond) / R_wall_axial;
   
   // Condenser->Stirling 
-  Q_cs = (T_cond - T_stirling) / R_stirling_hp_interface; //thermal resistance according to prescribed nominal DeltaT
-
+  Q_cs = max(1E-8,  (T_cond - T_stirling) / R_stirling_hp_interface );  //withthermal resistance according to prescribed nominal DeltaT
+  
   //----------------------------
   // Energy balances
   //----------------------------
@@ -409,7 +476,7 @@ equation
   
   // Evaporator 
   (C_evap_wall + C_adiab_wall) * der(T_evap) = Q_evap_bc - Q_ew - Q_ec; //with thermal mass of adiabatic section lumped in  
-  //C_evap_wall * der(T_evap) = Q_evap_bc - Q_ew - Q_ec;
+  //C_evap_wall * der(T_evap) = Q_evap_bc - Q_ew - Q_ec; //not lumping it here leads to instability
 
   // Wick
   C_wick * der(T_wick) = Q_ew - Q_wv; //Neglecting axial conductance in the wick
@@ -418,39 +485,31 @@ equation
   C_vapour = rho_v*cp_v*V_vcore; //Update vapour capacitance based on density (rarefied/continuous state)
   C_vapour * der(T_vap) = Q_wv - Q_vc;
   
-  when MODEL_STIRLING_MASS and T_stirling > T_stirling_nominal then 
+  if MODEL_STIRLING_ACTIVATION then 
+    when MODEL_STIRLING and T_stirling > T_stirling_activation then 
+      STIRLING_ACTIVATED = true;
+      Modelica.Utilities.Streams.print("Stirling engine activated!");
+    end when;
+  else 
     STIRLING_ACTIVATED = true;
-    Modelica.Utilities.Streams.print("Stirling engine activated!");
-  end when;
+  end if; 
   
   // Condenser and Stirling PCS
-  if MODEL_STIRLING_MASS then    
+  if MODEL_STIRLING then    
     C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cs;    
-    //(C_cond_wall + C_adiab_wall) * der(T_cond) = Q_vc + Q_ec - Q_cs;    
-    
-    /*
-    //latch trigger
-    if (T_stirling > T_stirling_nominal) then       
-      der(STIRLING_ACTIVATED) = 1; //positive derivative that gets integrated to activate the latch
-    else       
-      der(STIRLING_ACTIVATED) = 0;
-    end if;
-    */
+    //(C_cond_wall + C_adiab_wall) * der(T_cond) = Q_vc + Q_ec - Q_cs; //with thermal mass of adiabatic section lumped in 
       
-    /*
-    if (STIRLING_ACTIVATED) then //The Stirling engine can only heat up until it's turned on
-      C_stirling * der(T_stirling) = Q_cs - Q_stirling_bc;       
-    else 
-      C_stirling * der(T_stirling) = Q_cs; 
-    end if;
-    */
-    C_stirling * der(T_stirling) = Q_cs - Q_stirling_bc; //Q will jump from zero when the engine is turned on . 
+    if MODEL_STIRLING_INTERNALLY then 
+      C_stirling * der(T_stirling) = Q_cs - Q_stirling_bc; //Q will jump from zero when the engine is turned on . 
+    else
+      T_stirling = T_stirling_input; 
+    end if;  
   else 
     C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
     //(C_cond_wall + C_adiab_wall) * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
     T_stirling = 0; //placeholder value
     
-    //der(STIRLING_ACTIVATED) = 0; //Don't need the latch in this simplified case. 
+    
   end if; 
   
   

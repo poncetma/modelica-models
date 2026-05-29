@@ -35,8 +35,8 @@ parameter Integer nearest_exp_index = findNearestIndex(exp_times, t_exp_onset);
 
 //Values from KRUSTY papers - need to be parameters to be retrievable in Python
 constant Real Beta = 0.00688; //from Stolte et al.
-parameter Real betas[6] = {0.037, 0.211, 0.187, 0.407, 0.131, 0.027}*Beta; //from Grove et al.
-parameter Real lambdas[6] = {0.01273, 0.03175, 0.116, 0.3118, 1.399, 3.876}; //from Grove et al.
+parameter Real betas[6] = {0.037, 0.211, 0.187, 0.407, 0.131, 0.027}*Beta; //from Grove et al. (Taken from Godiva!)
+parameter Real lambdas[6] = {0.01273, 0.03175, 0.116, 0.3118, 1.399, 3.876}; //from Grove et al. (Taken from Godiva)!
 constant Real Lambda = 5.20395e-6; //from Stolte et al.
 
 //Values from MOOSE VTB (Serpent outputs)
@@ -559,7 +559,7 @@ Real rho_fb "reactivity feedback";
 Real alpha_Tf;
 Real T_fuel_ref;
 parameter Real alpha_Tf_default = -0.1844*0.01*Beta "fuel TRC, Poston et al"; 
-parameter Real T_fuel_ref_default = 1090 "reference temperature, from steady-state TH solve [K]"; //1091.173; //
+parameter Real T_fuel_ref_default = 1081 "reference temperature, from steady-state TH solve [K]"; 
 
 Real P_setpoint; 
 Real P_max ;
@@ -663,7 +663,8 @@ else
 end if; 
 
 ctrl_error = if PI_active then (P_setpoint - P_fiss) else 0; //Not sure whether to use P_tot or P_fiss for reactivity control 
-der(ctrl_error_integral) = if PI_active and T_fuel_outer - T_setpoint < 5.0 then ctrl_error else 0; //stop integrating the error
+der(ctrl_error_integral) = if PI_active then ctrl_error else 0; 
+//der(ctrl_error_integral) = if PI_active and T_fuel_outer - T_setpoint < 5.0 then ctrl_error else 0; //stop integrating the error
 
 ctrl_out = K_p*ctrl_error + K_i*ctrl_error_integral; 
 
@@ -680,7 +681,7 @@ when (not pre(PI_active)) and (P_fiss - P_setpoint < -10) and (P_fiss - P_max < 
       Modelica.Utilities.Streams.print("P_max: " + String(P_max));
 end when; 
 
-when (not pre(TEMP_SET_REACHED)) and (T_fuel_outer - T_setpoint > 0.1) then
+when (not pre(TEMP_SET_REACHED)) and (T_fuel_outer - T_setpoint > 0.01) then
   TEMP_SET_REACHED = true; //only activate when not previously set and the temperature rises above the setpoint
   rho_ext_Tset = rho_ext;
   Modelica.Utilities.Streams.print("SET NEW MAX REACTIVITY");

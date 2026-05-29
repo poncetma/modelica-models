@@ -12,7 +12,7 @@ model conductionKRUSTYConservDiscExplHeatLoss
   */
   import Modelica.Constants.pi;
   input Real P_integral_input "Instantaneous integral power [W]";
-  input Real T_outer_wall_input "Temperature of heat pipe wall [K]";
+  input Real T_HP_wall_input "Temperature of heat pipe wall [K]";
   input Real k_input "Conductivity (mean), controlled externally [W/m/K]"; 
   input Real Q_loss_input "Heat loss out of core, controllable [W]";
   input Boolean START_COLD "Start at uniform room temeperature (fixed, Dirichlet), in case of coupled startup simulation";  
@@ -80,7 +80,7 @@ model conductionKRUSTYConservDiscExplHeatLoss
   
     
   Real T[N](each start = 1073.15) "Temperature at shell centers [K]";
-  Real T_lagged[N] (each start = 1073.15); //Introduce a lagged temperature for semi-implicit scheme
+  Real T_lagged[N]; //Introduce a lagged temperature for semi-implicit scheme
   
   /* //This breaks things!
   Real T[N](each start = T_ambient) "Temperature at shell centers [K]";
@@ -89,8 +89,8 @@ model conductionKRUSTYConservDiscExplHeatLoss
   
   Real q_flow[N + 1] "Heat flux across shell faces [W/m^2]";
   Real V_shell[N] "Volume of each shell [m3]";
-  Real T_outer_wall "Temperature at the heat pipe interface [K]";
-  Real T_outer_wall_lagged;
+  Real T_HP_wall "Temperature at the heat pipe interface [K]";
+  Real T_HP_wall_lagged;
   //--Nodalisation
   parameter Real dr = (r_outer - r_inner)/N;
   parameter Real r_face[N + 1] = {r_inner + (i - 1)*dr for i in 1:N + 1};
@@ -100,9 +100,9 @@ model conductionKRUSTYConservDiscExplHeatLoss
   output Real T_mean "Volume-weighted mean temperature [K]";
   parameter Real recoverable_power_fraction = 0.93703;  //Near-field heating fraction as per "KRUSTY Reactor Design" paper
   parameter Real Q_loss_nominal = 350.0 "nominal heat loss rate through insulation + the rest of the surrounding components, set to agree with experiment";
-  parameter Real T_outer_wall_nominal = T_HP_nominal;
-  parameter Real T_ambient = 300.0 "ambient temperature";
-  parameter Real HTC_loss = Q_loss_nominal/(T_outer_wall_nominal^4 - T_ambient^4) "tuned HTC that gives the nominal heat loss [W/K]";
+  parameter Real T_outer_layer_nominal = 1073.15 "nominal temperature of outermost core layer";
+  parameter Real T_ambient = 15 + 273.15 "ambient temperature - matching KRUSTY initial conditions";
+  parameter Real HTC_loss = Q_loss_nominal/(T_outer_layer_nominal^4 - T_ambient^4) "tuned HTC that gives the nominal heat loss [W/K]";
   parameter Real outer_wall_area = 2*pi*r_face[N+1]*L;
   Real Q_outerwall_out;
   //Determine what nominal nuclear heating (fission + decay power) is needed to get the final effective thermal power that we expect at nominal conditions [2350 W after heat losses]
@@ -122,14 +122,15 @@ initial equation
       T[i] = T_ambient; //for start-up simulation, just assume the temperature starts off uniform at room temp.       
       //T_lagged[i] = T_ambient;
     end for;  
-    //T_outer_wall_lagged = T_outer_wall; 
+    //T_HP_wall_lagged = T_HP_wall; 
   end if;   
 equation
 
   //when sample(0, dt_lag) then
-  when {initial()} then //trigger at the beginning and every dt_lag interval. dt_lag is chosen to be much greater than the typical FMU timestep so that it won't be called internally (encountered issues with that).
+  //when {initial()} then //trigger at the beginning and at every dt_lag interval. dt_lag is chosen to be much greater than the typical FMU timestep so that it won't be called internally (encountered issues with that).
+  when {initial(), sample(0, dt_lag)} then
     T_lagged = pre(T);
-    T_outer_wall_lagged = pre(T_outer_wall);
+    T_HP_wall_lagged = pre(T_HP_wall);
   end when;
 
   if Q_loss_input > 1E-9 then 
@@ -138,7 +139,7 @@ equation
     Q_loss = 0;
   else 
     if (not FORCE_OUTERWALL_ADIABATIC) then 
-      Q_loss = HTC_loss*(T_outer_wall^4 - T_ambient^4); //At zero power, this should drive the temperature down to T_ambient      
+      Q_loss = HTC_loss*(T[N]^4 - T_ambient^4); //At zero power, this should drive the temperature down to T_ambient      
       //Q_loss=0;
     else 
       Q_loss = 0;
@@ -166,10 +167,10 @@ equation
   q_flow[1] = 0;
 
 // The temperature at the evap wall is fixed, received from HP solver.
-  if T_outer_wall_input > 1E-9 then
-    T_outer_wall = T_outer_wall_input;
+  if T_HP_wall_input > 1E-9 then
+    T_HP_wall = T_HP_wall_input;
   else
-    T_outer_wall = T_HP_nominal;
+    T_HP_wall = T_HP_nominal;
   end if;
   
   if k_input > 1e-9 then
@@ -184,8 +185,8 @@ equation
     end for;
     // Outer boundary: heat flux based on half-delta-r to boundary and computed heat loss
     if (not FORCE_OUTERWALL_ADIABATIC) then       
-      //q_flow[N + 1] = -1.*k_mean*(T_outer_wall - T[N])/(dr/2) + Q_loss/outer_wall_area;
-      q_flow[N + 1] = -1.*k_mean*(T_outer_wall - T[N])/(dr/2);
+      //q_flow[N + 1] = -1.*k_mean*(T_HP_wall - T[N])/(dr/2) + Q_loss/outer_wall_area;
+      q_flow[N + 1] = -1.*k_mean*(T_HP_wall - T[N])/(dr/2 + 0.00089/2);
     else 
       q_flow[N + 1] = 0;
     end if;
@@ -196,14 +197,19 @@ equation
     // q_flow is positive when heat flows towards positive r (negative T gradient)
     for i in 2:N loop
       //use harmonic interpolation for k
-      q_flow[i] = -1.*(2/(1/k_correlation(T_lagged[i - 1]) + 1/k_correlation(T_lagged[i])))*(T[i] - T[i - 1])/dr;
+      //q_flow[i] = -1.*(2/(1/k_correlation(T_lagged[i - 1]) + 1/k_correlation(T_lagged[i])))*(T[i] - T[i - 1])/dr;
+      
+      q_flow[i] = -1.*k_mean*(T[i] - T[i - 1])/dr; //Have to use k_mean to avoid weird temperature distribution error
+      
       //Note this only looks like a backward difference, but it's actually forward difference due to indexing shift
     end for;
     // Outer boundary: heat flux based on half-delta-r to boundary and computed heat loss
     if (not FORCE_OUTERWALL_ADIABATIC) then 
-      //q_flow[N + 1] = -1.*(2/(1/k_correlation(T_lagged[N]) + 1/k_correlation(T_outer_wall_lagged)))*(T_outer_wall - T[N])/(dr/2) + Q_loss/outer_wall_area;    
-      //q_flow[N + 1] = -1.*(2/(1/k_correlation(T_lagged[N]) + 1/k_correlation(T_outer_wall_lagged)))*(T_outer_wall - T[N])/(dr/2 ); 
-      q_flow[N + 1] = -1.*(2/(1/k_correlation(T_lagged[N]) + 1/k_correlation(T_outer_wall_lagged)))*(T_outer_wall - T[N])/(dr/2 + 0.00089/2); //Note that it's not really the outer wall temperature, it's the heat pipe evaporator *mean* temperature, so the delta r here should account for half the evap thickness (~half a mm).
+      //q_flow[N + 1] = -1.*(2/(1/k_correlation(T_lagged[N]) + 1/k_correlation(T_HP_wall_lagged)))*(T_HP_wall - T[N])/(dr/2) + Q_loss/outer_wall_area;    
+      //q_flow[N + 1] = -1.*(2/(1/k_correlation(T_lagged[N]) + 1/k_correlation(T_HP_wall_lagged)))*(T_HP_wall - T[N])/(dr/2 ); 
+      //q_flow[N + 1] = -1.*(2/(1/k_correlation(T_lagged[N]) + 1/k_correlation(T_HP_wall_lagged)))*(T_HP_wall - T[N])/(dr/2 + 0.00089/2); //Note that it's not really the outer wall temperature, it's the heat pipe evaporator *mean* temperature, so the delta r here should account for half the evap thickness (~half a mm).
+      q_flow[N + 1] = -1.*k_mean*(T_HP_wall - T[N])/(dr/2 + 0.00089/2); 
+      
     else
       q_flow[N + 1] = 0;
     end if;
@@ -218,11 +224,13 @@ equation
 // handle outer boundary case
   q_gen[N] = q_gen_profile[N]/power_profile_integral*P_integral; //update q_gen  
   //rho_correlation(T[N])*cp_correlation(T[N])*der(T[N]) = ((2*pi*r_face[N]*L)*q_flow[N] - outer_wall_area*q_flow[N + 1])/V_shell[N] + q_gen[N];
-  //A_hp_eff = A_hp_eff_nominal;  
+  //A_hp_eff = A_hp_eff_nominal;    
   
   //Works for warm-critical transients. Lowering the transition temp to e.g. 400 gives a noticeably worse power peak result.
-  //For the full cold startup, this transition should be below the heat pipe transition temperature (~700 K) or else the latter will be pointless
-  A_hp_eff = 0.001*A_hp_eff_nominal + (A_hp_eff_nominal - 0.001*A_hp_eff_nominal) / (1 + exp(-(T[N] - 600) / 50)); //temp-dependant effective area (contact resistance)
+  //Temp-dependant effective area (emulating contact resistance). 
+  //For the full cold startup, this transition should be below the heat pipe transition temperature (~700 K) or else the latter will be pointless  
+  //A_hp_eff = 0.05*A_hp_eff_nominal + ( (1 - 0.05)*A_hp_eff_nominal )  / (1 + exp(-(T[N] - 600) / 50)); 
+  A_hp_eff = 0.03*A_hp_eff_nominal + ( (1 - 0.03)*A_hp_eff_nominal )  / (1 + exp(-(T[N] - 600) / 50)); 
   
   
   rho_correlation(T[N])*cp_correlation(T[N])*der(T[N]) = ((2*pi*r_face[N]*L)*q_flow[N] - A_hp_eff*q_flow[N + 1])/V_shell[N] + q_gen[N] - Q_loss/V_shell[N]; //using the proper heat pipe area which will give a bigger delta T. 
