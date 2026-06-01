@@ -17,6 +17,8 @@ parameter Real HTC_cold = Q_draw_nominal/(T_stirling_nominal - T_stirling_cold_n
 
 input Boolean COLD_START; 
 input Real Q_cs_input "incoming heat transfer rate from the heat pipe condenser [W]";
+input Real Q_bc_input "outgoing heat transfer rate to cold sink [W]";
+input Real T_s_init_input; 
 output Real T_s; 
 
 Real Q_cs "instantaneous heat transfer rate from the heat pipe condenser to the Stirling engine [W]";
@@ -24,20 +26,35 @@ Real Q_bc "instantaneous heat transfer from the Stirling engine to the cold sink
 
 
 
-parameter Boolean MODEL_STIRLING_ACTIVATION = true; 
+parameter Boolean MODEL_STIRLING_ACTIVATION = false "Require the Stirling engine to reach a setpoint temperature before drawing heat";
 
+//input Boolean MODEL_STIRLING_ACTIVATION_input; 
+//Boolean MODEL_STIRLING_ACTIVATION;
 
-Boolean STIRLING_ACTIVATED(start=false,fixed=true); //activated with 'when' statement
+Boolean STIRLING_ACTIVATED (start = false, fixed=true); //activated with 'when' statement
 
 initial equation
 
 if COLD_START then 
   T_s = 15 + 273.15;
 else 
-  T_s = 15 + 273.15; //T_stirling_nominal;
+  if T_s_init_input > 1E-9 then 
+    T_s = T_s_init_input;
+  else 
+    T_s = T_stirling_nominal;
+  end if; 
 end if;   
 
+
 equation
+
+/*
+if MODEL_STIRLING_ACTIVATION_input then 
+  MODEL_STIRLING_ACTIVATION = true; 
+else 
+  MODEL_STIRLING_ACTIVATION = false;
+end if; 
+*/
 
 if MODEL_STIRLING_ACTIVATION then 
   when T_s > T_stirling_activation then 
@@ -55,10 +72,18 @@ else
   Q_cs = Q_draw_nominal;
 end if;
 
-if STIRLING_ACTIVATED then 
-  Q_bc = HTC_cold*(T_s - T_stirling_cold_nominal);
+if Q_bc_input > 1E-9 then //override
+  Q_bc = Q_bc_input;
 else
-  Q_bc = 0;
+  if MODEL_STIRLING_ACTIVATION then 
+    if STIRLING_ACTIVATED then 
+      Q_bc = HTC_cold*(T_s - T_stirling_cold_nominal);
+    else
+      Q_bc = 0;
+    end if;
+  else 
+    Q_bc = HTC_cold*(T_s - T_stirling_cold_nominal); 
+  end if; 
 end if;
 
 //Energy balance

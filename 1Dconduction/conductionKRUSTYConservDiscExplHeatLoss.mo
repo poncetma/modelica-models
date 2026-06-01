@@ -19,7 +19,7 @@ model conductionKRUSTYConservDiscExplHeatLoss
   input Boolean FORCE_OUTERWALL_ADIABATIC "Force an adiabatic boundary condition in the outer wall (in addition to inner)"; 
   
   // --- Physical Parameters (KRUSTY U-10Mo) ---
-  final constant Integer N = 25 "Number of radial shells";
+  final constant Integer N = 50 "Number of radial shells"; //25
   //tested up to several hundred nodes
   parameter Real r_inner = 0.02 "Inner fuel radius [m]";
   parameter Real L = 0.25 "Core height [m]";
@@ -101,7 +101,8 @@ model conductionKRUSTYConservDiscExplHeatLoss
   parameter Real recoverable_power_fraction = 0.93703;  //Near-field heating fraction as per "KRUSTY Reactor Design" paper
   parameter Real Q_loss_nominal = 350.0 "nominal heat loss rate through insulation + the rest of the surrounding components, set to agree with experiment";
   parameter Real T_outer_layer_nominal = 1073.15 "nominal temperature of outermost core layer";
-  parameter Real T_ambient = 15 + 273.15 "ambient temperature - matching KRUSTY initial conditions";
+  parameter Real T_ambient = 15 + 273.15 "ambient temperature - matching KRUSTY initial conditions";  
+  //parameter Real HTC_loss = Q_loss_nominal/(T_outer_layer_nominal - T_ambient) "tuned HTC that gives the nominal heat loss [W/K]";
   parameter Real HTC_loss = Q_loss_nominal/(T_outer_layer_nominal^4 - T_ambient^4) "tuned HTC that gives the nominal heat loss [W/K]";
   parameter Real outer_wall_area = 2*pi*r_face[N+1]*L;
   Real Q_outerwall_out;
@@ -139,7 +140,9 @@ equation
     Q_loss = 0;
   else 
     if (not FORCE_OUTERWALL_ADIABATIC) then 
+      //Q_loss = HTC_loss*(T[N] - T_ambient); //Gives poor results in warm-criticals (too much heat loss)
       Q_loss = HTC_loss*(T[N]^4 - T_ambient^4); //At zero power, this should drive the temperature down to T_ambient      
+      
       //Q_loss=0;
     else 
       Q_loss = 0;
@@ -230,8 +233,9 @@ equation
   //Temp-dependant effective area (emulating contact resistance). 
   //For the full cold startup, this transition should be below the heat pipe transition temperature (~700 K) or else the latter will be pointless  
   //A_hp_eff = 0.05*A_hp_eff_nominal + ( (1 - 0.05)*A_hp_eff_nominal )  / (1 + exp(-(T[N] - 600) / 50)); 
-  A_hp_eff = 0.03*A_hp_eff_nominal + ( (1 - 0.03)*A_hp_eff_nominal )  / (1 + exp(-(T[N] - 600) / 50)); 
+  //A_hp_eff = 0.03*A_hp_eff_nominal + ( (1 - 0.03)*A_hp_eff_nominal )  / (1 + exp(-(T[N] - 600) / 50)); //tuned prior to moving adiabatic thermal mass in HP
   
+  A_hp_eff = A_hp_eff_nominal; 
   
   rho_correlation(T[N])*cp_correlation(T[N])*der(T[N]) = ((2*pi*r_face[N]*L)*q_flow[N] - A_hp_eff*q_flow[N + 1])/V_shell[N] + q_gen[N] - Q_loss/V_shell[N]; //using the proper heat pipe area which will give a bigger delta T. 
   //Q_outerwall_out = q_flow[N + 1]*outer_wall_area; 
