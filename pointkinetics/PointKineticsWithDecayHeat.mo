@@ -605,7 +605,7 @@ else //take a negative parameter input as implying infinite power history
   if P_0_input > 0 then 
     P_tot = P_0_input;
   else 
-    P_tot = 3000.0;
+    P_tot = 0.0; //3000.0
   end if;
 end if;
   

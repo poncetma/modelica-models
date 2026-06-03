@@ -45,11 +45,11 @@ Outputs: Evaporator wall temperature,
 
   // Wick (screen + liquid)
   parameter Real rho_screen = 8000 "kg/m3 (approx stainless screen)";
-  parameter Real cp_screen = 500 "J/kg.K (screen)";
-  parameter Real k_screen = 20 "W/m.K (screen)";
+  parameter Real cp_screen = 601.5 "J/kg.K (screen)"; //SS316 @800C (Kim (ANL), tech rep)
+  parameter Real k_screen = 26.1 "W/m.K (screen)"; //SS316 @800C (Kim (ANL), tech rep)
   parameter Real rho_Na_l = rho_l_correlation(T_melt); //fixed at the melting point
   parameter Real cp_Na_l = cp_l_correlation(T_melt);
-  parameter Real k_Na_l = 70 "conductivity of sodium liquid [W/m/K]";  
+  parameter Real k_Na_l = 58 "conductivity of sodium liquid [W/m/K]"; //@800C IAEA data collection  
   parameter Real porosity = 0.7;  
   
   parameter Real m_wick_tot = (rho_screen*V_wick*(1-porosity) + rho_Na_l*V_wick*porosity);
@@ -119,8 +119,9 @@ Outputs: Evaporator wall temperature,
   parameter Real R_cond_radial = R_wall_c + R_wick_c;
   parameter Real R_adiab_radial = R_wall_a + R_wick_a; 
   
-  parameter Real R_wall_axial = (La + 0.5*Le + 0.5*Lc )/(k_wall(800)*pi*(ro_wall^2. - ri_wall^2)) "effective axial thermal resistance of the wall"; 
-  //parameter Real R_wall_axial = 100*(La + 0.5*Le + 0.5*Lc )/(k_wall*pi*(ro_wall^2. - ri_wall^2)) "effective axial thermal resistance of the wall"; 
+  //parameter Real R_wall_axial = (La + 0.5*Le + 0.5*Lc )/(k_wall(800)*pi*(ro_wall^2. - ri_wall^2)) "effective axial thermal resistance of the wall"; 
+  parameter Real R_wall_axial_ea = (0.5*Le + 0.5*La)/(k_wall(800)*pi*(ro_wall^2. - ri_wall^2.));
+  parameter Real R_wall_axial_ac = (0.5*La + 0.5*Lc)/(k_wall(800)*pi*(ro_wall^2. - ri_wall^2.));
   
   parameter Real R_wv = 1E-4 "wick-vapour interface resistance"; //Setting this too low leads to instabilities (but it should be << 1e-3) //1E-6
   
@@ -327,16 +328,16 @@ Outputs: Evaporator wall temperature,
   //----------------------------
   // Model options -- these are not intended to be selectable by the FMU handler, but baked-in at compilation
   //----------------------------
-  parameter Boolean COLD_START = true;
+  parameter Boolean COLD_START = false;
   //Option to account for heat pipe activation (temp-dependent thermal resistance) or not 
-  parameter Boolean MODEL_HP_STARTUP = true;
+  parameter Boolean MODEL_HP_STARTUP = false;
   //Option to model the core as a single lump or simply take Q_evap as a boundary condition
   parameter Boolean MODEL_CORE_INTERNALLY = false; 
   //Option to model the thermal mass of the Stirling PCS or just take it as a BC on the condenser
   parameter Boolean MODEL_STIRLING = true; 
   parameter Boolean MODEL_STIRLING_ACTIVATION = true;
   //Follow-up option to do so internally or via an external FMU 
-  parameter Boolean MODEL_STIRLING_INTERNALLY = true; //leaving this false with MODEL_STIRLING true can cause the initialisation to fail within OM as T_Stirling defaults to 0
+  parameter Boolean MODEL_STIRLING_INTERNALLY = false; //leaving this false with MODEL_STIRLING true can cause the initialisation to fail within OM as T_Stirling defaults to 0
   
     
   //----------------------------
@@ -382,14 +383,15 @@ else  //change the starting conditions to speed up convergence to steady-state i
   der(T_evap) = 0;
   der(T_wick) = 0;
   der(T_vap) = 0;
-  der(T_adiab) = 0;
-  //der(T_cond) = 0; //This doesn't work as it amounts to a heat flux condition ? 
-  T_cond = T_stirling + R_stirling_hp_interface*Q_draw_nominal; //fix the delta T as per definition of R_stirling_hp_interface
-  /*
+  der(T_adiab) = 0;  
+  
   if T_cond_init_input > 1E-9 then 
     T_cond = T_cond_init_input;
+  else    
+    //T_cond = T_stirling + R_stirling_hp_interface*Q_draw_nominal; //fix the delta T as per definition of R_stirling_hp_interface
+    T_cond = T_stirling + R_stirling_hp_interface*Q_evap_input; //fix the delta T as per definition of R_stirling_hp_interface
   end if; 
-  */
+  
   
   if MODEL_STIRLING_INTERNALLY then     
     der(T_stirling) = 0;  
@@ -444,7 +446,7 @@ equation
   Re = rho_v*v_v*(2*r_vapour_eff)/mu_v; 
   
   /* Basic test for heat pipe activation: is much more heat conducted through the vapour than through the wall? */  
-  if R_vapour_ax < R_wall_axial/10. then 
+  if R_vapour_ax < (R_wall_axial_ea + R_wall_axial_ac)/10. then 
     HP_activated = true;
   else 
     HP_activated = false;
@@ -475,7 +477,7 @@ equation
     else
       if MODEL_STIRLING_INTERNALLY and STIRLING_ACTIVATED then 
         Q_stirling_bc = HTC_cold*(T_stirling - T_stirling_cold_nominal);
-        //Q_stirling_bc = 2350/8;
+        
       else 
         Q_stirling_bc = 0;
       end if;          
@@ -500,25 +502,26 @@ equation
   Q_wv = (T_wick - T_vap) / R_wv;  
 
   // Vapour->adiabatic section 
-  R_va = max(R_adiab_radial, R_adiab_radial + 0.5*R_vapour_ax); 
+  Q_lim_viscous = viscous_limit(T_vap);
+  Q_lim_flood = flooding_limit(T_vap);
+  
+  R_va = max(R_adiab_radial, R_adiab_radial + R_vapour_ax/(La+Le/2.+Lc/2.)*(Le/2. + La/2.)); 
   Q_va = min(Q_lim_flood,min(Q_lim_viscous, (T_vap - T_adiab)/R_va)); 
 
   // Vapour->condenser 
-  R_vc = max(R_cond_radial, R_cond_radial + R_vapour_ax);   
-  
-  Q_lim_viscous = viscous_limit(T_vap);
-  Q_lim_flood = flooding_limit(T_vap);
-  //Q_vc = (T_vap - T_cond) / R_vc;  
+  R_vc = max(R_cond_radial, R_cond_radial + R_vapour_ax);       
   Q_vc = min(Q_lim_flood, min(Q_lim_viscous, (T_vap - T_cond) / R_vc));  //Impose physical throughput limits
   
-  // Evaporator->condenser
-  //Q_ec = (T_evap - T_cond) / R_wall_axial;
+  /* //old simplified model 
+  Evaporator->condenser
+  Q_ec = (T_evap - T_cond) / R_wall_axial;
+  */
   
   // Evaporator-> adiabatic section
-  Q_ea = (T_evap - T_adiab) / (0.5*R_wall_axial); 
+  Q_ea = (T_evap - T_adiab) / (R_wall_axial_ea); 
   
   // Adiabatic section -> condenser
-  Q_ac = (T_adiab - T_cond) / (0.5*R_wall_axial); 
+  Q_ac = (T_adiab - T_cond) / (R_wall_axial_ac); 
   
   // Condenser->Stirling 
   Q_cs = max(1E-8,  (T_cond - T_stirling) / R_stirling_hp_interface );  //with thermal resistance according to prescribed nominal DeltaT
@@ -543,11 +546,14 @@ equation
   
 
   // Wick
-  C_wick * der(T_wick) = Q_ew - Q_wv; 
+  C_wick * der(T_wick) = Q_ew - Q_wv; //No axial conduction as there is no wick in the adiabatic/condenser sections in KRUSTY
 
   // Vapour
   C_vapour = rho_v*cp_v*V_vcore; //Update vapour capacitance based on density (rarefied/continuous state)
-  C_vapour * der(T_vap) = Q_wv - Q_vc - Q_va;
+  C_vapour * der(T_vap) = Q_wv - Q_va - Q_vc; 
+  
+  // Adiabatic section 
+  C_adiab_wall * der(T_adiab) = Q_ea + Q_va - Q_ac; 
   
   if MODEL_STIRLING_ACTIVATION then 
     when MODEL_STIRLING and T_stirling > T_stirling_activation then 
@@ -559,12 +565,10 @@ equation
   end if; 
   
   // Condenser and Stirling PCS
-  if MODEL_STIRLING then    
+  if MODEL_STIRLING then        
     //C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cs;    
     C_cond_wall * der(T_cond) = Q_vc + Q_ac - Q_cs;    
-    //(C_cond_wall + C_adiab_wall) * der(T_cond) = Q_vc + Q_ec - Q_cs; //with thermal mass of adiabatic section lumped in 
-    
-    C_adiab_wall * der(T_adiab) = Q_ea + Q_va - Q_ac; 
+    //(C_cond_wall + C_adiab_wall) * der(T_cond) = Q_vc + Q_ec - Q_cs; //with thermal mass of adiabatic section lumped in     
     
       
     if MODEL_STIRLING_INTERNALLY then 
@@ -578,8 +582,9 @@ equation
     end if;  
   else 
     //C_cond_wall * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
-    C_cond_wall * der(T_cond) = Q_vc + Q_ac - Q_cond_bc;
     //(C_cond_wall + C_adiab_wall) * der(T_cond) = Q_vc + Q_ec - Q_cond_bc;
+    C_cond_wall * der(T_cond) = Q_vc + Q_ac - Q_cond_bc;
+    
     T_stirling = 0; //placeholder value    
     
   end if; 

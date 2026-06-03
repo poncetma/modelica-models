@@ -99,7 +99,8 @@ model conductionKRUSTYConservDiscExplHeatLoss
   output Real Q_evap_out(start=1, fixed=false) "Heat flow out of heat pipe wall [W]";
   output Real T_mean "Volume-weighted mean temperature [K]";
   parameter Real recoverable_power_fraction = 0.93703;  //Near-field heating fraction as per "KRUSTY Reactor Design" paper
-  parameter Real Q_loss_nominal = 350.0 "nominal heat loss rate through insulation + the rest of the surrounding components, set to agree with experiment";
+  //parameter Real Q_loss_nominal = 350.0 "nominal heat loss rate through insulation + the rest of the surrounding components, set to agree with experiment";
+  parameter Real Q_loss_nominal = 450; 
   parameter Real T_outer_layer_nominal = 1073.15 "nominal temperature of outermost core layer";
   parameter Real T_ambient = 15 + 273.15 "ambient temperature - matching KRUSTY initial conditions";  
   //parameter Real HTC_loss = Q_loss_nominal/(T_outer_layer_nominal - T_ambient) "tuned HTC that gives the nominal heat loss [W/K]";
