@@ -1,7 +1,7 @@
 model FPSE_Nonlinear_Majidniya
- "Implementation of Majidniya et al. (2019) Eqs. (15)/(16) for the RE-1000 case.
-   Uses Table 2 parameter values (converted to SI).
-   Implements EXACT algebraic structure of Eq.(15) and Eq.(16) with named intermediates."
+ /*
+ Majidniya model matching results of first journal paper without heat transfer. 
+ */
   import Modelica.Constants.pi;
 
   // ------------------- Paper constants (Table 2, Majidniya) -------------------

@@ -539,7 +539,6 @@ equation
   end if; 
   
   // Evaporator 
-  //Where to lump in the thermal mass of the adiabatic section? If it goes in the condenser this will lead to greater lag there and -> better agreement with exp?
   //(C_evap_wall + C_adiab_wall) * der(T_evap) = Q_evap_bc - Q_ew - Q_ec; //with thermal mass of adiabatic section lumped in  
   //C_evap_wall * der(T_evap) = Q_evap_bc - Q_ew - Q_ec; 
   C_evap_wall * der(T_evap) = Q_evap_bc - Q_ew - Q_ea; 

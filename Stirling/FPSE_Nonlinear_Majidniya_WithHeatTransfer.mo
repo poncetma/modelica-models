@@ -1,7 +1,8 @@
 model FPSE_Nonlinear_Majidniya_WithHeatTransfer
- "Implementation of Majidniya et al. (2019) Eqs. (15)/(16) for the RE-1000 case.
-   Uses Table 2 parameter values (converted to SI).
-   "
+ /*
+  Full Majidniya model (dynamic gas/motion equations plus thermal/mass balance). 
+  Still missing coupling to the hot/cold side walls and accounting of these solid thermal masses. 
+ */
   import Modelica.Constants.pi;
 
   // ------------------- Paper constants (Table 2, Majidniya) -------------------
