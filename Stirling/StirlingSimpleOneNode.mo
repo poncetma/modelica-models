@@ -2,12 +2,12 @@
 A simple lumped capacitance model of the Stirling engine with a single node. Intended to be a modular version of the one built into the HeatPipeWithVapourCore model. 
 
 Inputs: Heat transfer rate from heat pipe condenser (Q_cs_input)
-Outputs: Lumped stirling temperature (T_stirling) 
+Outputs: Lumped stirling temperature (T_s) 
 */
 model StirlingSimpleOneNode
 
-parameter Real C_cond_wall = 17.780965 "Heat pipe condenser wall capacitance [J/K]";
-parameter Real C_stirling = 15*C_cond_wall "Stirling capacitance [J/K]"; 
+parameter Real C_adiabcond_wall = 17.780965 "Heat pipe adiabatic + condenser wall capacitance [J/K]";
+parameter Real C_stirling = 15*C_adiabcond_wall "Stirling capacitance [J/K]"; 
 
 parameter Real T_stirling_activation = 650 + 273.15 "Temperature at which Stirlings are turned on in start-up run of KRUSTY"; 
 parameter Real T_stirling_nominal = 650 + 273.15 "Stirling hot-side temperature, Poston et al., Fig. 10 [K]"; //630 + 273.15

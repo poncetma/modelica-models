@@ -5,8 +5,8 @@ model FPSE_Nonlinear_Majidniya_WithHeatTransfer
  */
   import Modelica.Constants.pi;
 
-  // ------------------- Paper constants (Table 2, Majidniya) -------------------
-  // Temperatures (Table 2)
+  
+  // Temperatures 
   //parameter Real T_h = 814.3 "K (heater temperature from Table 2)";
   parameter Real T_h_nominal = 814.3; 
   parameter Real T_k_nominal = 322.8 "K (cooler/regenerator reference temp from Table 2)";
@@ -14,7 +14,7 @@ model FPSE_Nonlinear_Majidniya_WithHeatTransfer
   parameter Real T_b = T_k_nominal "K (buffer assumed same as cold side in paper)";
 
   // Mean pressure (Table 2)
-  // Note: Table 2 lists "Pmean 71 bars" -> 71 bar = 7.1e6 Pa
+  
   parameter Real p_mean = 71e5; //71e5 "Pa (71 bar) - RE-1000 case from Table 2, equal to MR/V_avT";
 
   // Volumes (Table 2)
