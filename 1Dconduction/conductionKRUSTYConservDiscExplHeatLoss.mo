@@ -19,7 +19,7 @@ model conductionKRUSTYConservDiscExplHeatLoss
   input Boolean FORCE_OUTERWALL_ADIABATIC "Force an adiabatic boundary condition in the outer wall (in addition to inner)"; 
   
   // --- Physical Parameters (KRUSTY U-10Mo) ---
-  final constant Integer N = 50 "Number of radial shells"; //25
+  final constant Integer N = 25 "Number of radial shells"; //25
   //tested up to several hundred nodes
   parameter Real r_inner = 0.02 "Inner fuel radius [m]";
   parameter Real L = 0.25 "Core height [m]";
@@ -190,7 +190,8 @@ equation
     // Outer boundary: heat flux based on half-delta-r to boundary and computed heat loss
     if (not FORCE_OUTERWALL_ADIABATIC) then       
       //q_flow[N + 1] = -1.*k_mean*(T_HP_wall - T[N])/(dr/2) + Q_loss/outer_wall_area;
-      q_flow[N + 1] = -1.*k_mean*(T_HP_wall - T[N])/(dr/2 + 0.00089/2);
+      //q_flow[N + 1] = -1.*k_mean*(T_HP_wall - T[N])/(dr/2 + 0.00089/2);
+      q_flow[N + 1] = -1.*k_mean*(T_HP_wall - T[N])/(dr/2); //now assume that T_HP_wall is really the surface temperature
     else 
       q_flow[N + 1] = 0;
     end if;
@@ -230,6 +231,7 @@ equation
   //rho_correlation(T[N])*cp_correlation(T[N])*der(T[N]) = ((2*pi*r_face[N]*L)*q_flow[N] - outer_wall_area*q_flow[N + 1])/V_shell[N] + q_gen[N];
   //A_hp_eff = A_hp_eff_nominal;    
   
+  /*This kind of variable HP contact resistance is better applied on the HP solver side*/
   //Works for warm-critical transients. Lowering the transition temp to e.g. 400 gives a noticeably worse power peak result.
   //Temp-dependant effective area (emulating contact resistance). 
   //For the full cold startup, this transition should be below the heat pipe transition temperature (~700 K) or else the latter will be pointless  

@@ -9,8 +9,12 @@ model StirlingTwoNodeWithCorrelation
 parameter Real C_adiabcond_wall = 17.780965 "Heat pipe adiabatic + condenser wall capacitance [J/K]";
 parameter Real C_stirling_onenode = 15*C_adiabcond_wall "Stirling capacitance [J/K]"; 
 //Both hot and cold sides have thermal masses, but note that the hot-side one is the one that really matters for the system start-up and it has a greater impact on the power throughput.
-parameter Real C_stirling_h = 1.5*C_stirling_onenode;
-parameter Real C_stirling_c = 1.5*C_stirling_onenode; 
+parameter Real C_stirling_h = 1.*C_stirling_onenode;
+parameter Real C_stirling_c = 1.*C_stirling_onenode;
+//1.5x seems to work better for startup transient but makes the load rejection response worse.
+//So the reason for the greater lag in Stirling temperature rise is probably more to do with intermediate heat losses than with the heat capacity. 
+//parameter Real C_stirling_h = 1.5*C_stirling_onenode; 
+//parameter Real C_stirling_c = 1.5*C_stirling_onenode; 
 
 
 //parameter Real T_stirling_activation = 650 + 273.15 "Temperature at which Stirlings are turned on in start-up run of KRUSTY"; 

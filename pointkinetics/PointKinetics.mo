@@ -57,7 +57,8 @@ function alpha_Tf_poly
 end alpha_Tf_poly;
 
 //Values from KRUSTY papers - need to be parameters to be retrievable in Python
-constant Real Beta = 0.00688; //from Stolte et al.
+//constant Real Beta = 0.00688; //from Stolte et al.
+constant Real Beta = 0.00650; //Stated by Grove et al, assumed value taken from Godiva. But consistent with 15-cent and 30-cent studies.
 parameter Real betas[6] = {0.037, 0.211, 0.187, 0.407, 0.131, 0.027}*Beta; //from Grove et al.
 parameter Real lambdas[6] = {0.01273, 0.03175, 0.116, 0.3118, 1.399, 3.876}; //from Grove et al.
 constant Real Lambda = 5.20395e-6; //from Stolte et al.

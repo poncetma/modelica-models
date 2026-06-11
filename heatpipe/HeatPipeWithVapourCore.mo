@@ -328,16 +328,16 @@ Outputs: Evaporator wall temperature,
   //----------------------------
   // Model options -- these are not intended to be selectable by the FMU handler, but baked-in at compilation
   //----------------------------
-  parameter Boolean COLD_START = false;
+  parameter Boolean COLD_START = true;
   //Option to account for heat pipe activation (temp-dependent thermal resistance) or not 
-  parameter Boolean MODEL_HP_STARTUP = false;
+  parameter Boolean MODEL_HP_STARTUP = true;
   //Option to model the core as a single lump or simply take Q_evap as a boundary condition
   parameter Boolean MODEL_CORE_INTERNALLY = false; 
   //Option to model the thermal mass of the Stirling PCS or just take it as a BC on the condenser
   parameter Boolean MODEL_STIRLING = true; 
   parameter Boolean MODEL_STIRLING_ACTIVATION = true;
   //Follow-up option to do so internally or via an external FMU 
-  parameter Boolean MODEL_STIRLING_INTERNALLY = false; //leaving this false with MODEL_STIRLING true can cause the initialisation to fail within OM as T_Stirling defaults to 0
+  parameter Boolean MODEL_STIRLING_INTERNALLY = true; //leaving this false with MODEL_STIRLING true can cause the initialisation to fail within OM as T_Stirling defaults to 0
   
     
   //----------------------------
@@ -360,6 +360,12 @@ Outputs: Evaporator wall temperature,
   Real Q_lim_flood; 
   
   input Real T_cond_init_input;   
+  
+  output Real T_evap_interface "actual evaporator interface temperature [K]";
+  
+  parameter Real R_evap_halfinternal = log((ro_wall-twall/2)/ri_wall)/(2*pi*Le*k_wall(800)); //roughly but not exactly half of R_wall_e  
+
+  Real R_contact_eff; 
 
 initial equation 
 
@@ -588,6 +594,11 @@ equation
     
   end if; 
   
+  //project to the wall surface based on internal resistance
+  //T_evap_interface = T_evap + R_evap_halfinternal; 
+  //add effective contact resistance (will just push T_hp_wall higher on the other side). 
+  T_evap_interface = T_evap + R_evap_halfinternal + R_contact_eff; 
   
-
+  //R_contact_eff = 10*R_wall_e *exp(-(T_evap - 400) / 50); //R_wall_e
+  R_contact_eff = 0;
 end HeatPipeWithVapourCore;
