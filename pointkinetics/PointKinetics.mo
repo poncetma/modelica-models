@@ -32,7 +32,8 @@ Real rho_ext ;//(start = 0, fixed = true);
 Real T_fuel; 
 Real T_fuel_outer; 
 
-output Real P "instantaneous fission power"; 
+Real P "instantaneous fission power"; 
+output Real P_tot; 
 Real Cs[6] "instaneous group-wise precursor concentration"; 
 Real rho "instantaneous net reactivity";
 Real rho_fb "reactivity feedback";
@@ -109,6 +110,7 @@ P_max = P_alt;
 ctrl_out = 0;
 */
 equation
+
 
 if P_0_input > 1e-12 then 
   P_0 = P_0_input;
@@ -262,6 +264,8 @@ der(n) = (rho - Beta)/Lambda.*n + sum(lambdas.*Cs_alt);
 der(Cs_alt) = betas/Lambda*n - lambdas.*Cs_alt;
 //P_alt = n*P_0;
 P_alt = max(1e-8, n*P_0);
+
+P_tot = P_alt; //align with same convention as the solver that includes decay power. 
 
 annotation(
     __OpenModelica_commandLineOptions = "--matchingAlgorithm=PFPlusExt --indexReductionMethod=dynamicStateSelection -d=initialization,NLSanalyticJacobian",

@@ -5,7 +5,7 @@ uses a dynamic thermal resistance to represent the vapour core of the KRUSTY sod
 This resistance mimics the effect of the heat pipe "activating" during start-up, which is a function of the vapour pressure and temperature. This function is highly non-linear due to the sharp rarefied->continuous flow transition occuring at the transition temeprature. This temperature
 is computed from the critical Knudsen number based on kinetic theory. The effect of this is that, during cold/frozen start-up, there is initially almost no heat transfer to the condenser. The rest of the heat pipe should behave the same way as the Zuo&Faghri-inspired model. Note that the melting phase of start-up is neglected as the total enthalpy of fusion is negligible, as also shown here. 
 
-Emperical throughput limits from KRUSTY's heat pipes (viscous limit, flooding limit) have also been added. 
+Throughput limits from KRUSTY's heat pipes (viscous limit, flooding limit) have also been added, derived from a high-fidelity/advective model (Poston et al., "Results of the KRUSTY Nuclear System Test). 
 
 Inputs: Number of heat pipes being modelled together, heat flux into evaporator, condenser/Stirling boundary condition
 Outputs: Evaporator wall temperature, 
@@ -127,18 +127,16 @@ Outputs: Evaporator wall temperature,
   
   Real R_vapour_ax "Axial resistance of the vapour core, dependent on vapour pressure and flow transition"; 
   
-  parameter Real Q_draw_nominal = 2350/8 "nominal power draw [W]";
+  
   parameter Real T_stirling_activation = 650 + 273.15 "Temperature at which Stirlings are turned on in start-up run of KRUSTY"; 
   parameter Real T_stirling_nominal = 650 + 273.15 "Stirling hot-side temperature, Poston et al., Fig. 10 [K]"; //630 + 273.15
-  //parameter Real R_stirling_hp_interface = 145/Q_draw_nominal; //165/Q_cond_nominal;
-  parameter Real R_stirling_hp_interface = ( (T_stirling_nominal + 145) - T_stirling_nominal )/Q_draw_nominal; 
-  //parameter Real R_stirling_hp_interface = ( (T_stirling_nominal + 145)^4 - T_stirling_nominal^4 )/Q_draw_nominal; 
-  
-  parameter Real T_cond_nominal = T_stirling_nominal + Q_draw_nominal*R_stirling_hp_interface; 
-  
-  parameter Real HTC = Q_draw_nominal/(T_cond_nominal - T_stirling_nominal);
-  
   parameter Real T_stirling_cold_nominal  = 65 + 273.15; 
+  
+  /*The below parameters don't need to be computed based on the number of heat pipes as we can assume each heat pipe has its own nominal power draw equal to 2250/8 */
+  parameter Real Q_draw_nominal = 2250/8 "nominal power draw [W]";
+  parameter Real R_stirling_hp_interface = ( (T_stirling_nominal + 145) - T_stirling_nominal )/Q_draw_nominal;     
+  parameter Real T_cond_nominal = T_stirling_nominal + Q_draw_nominal*R_stirling_hp_interface;   
+  parameter Real HTC = Q_draw_nominal/(T_cond_nominal - T_stirling_nominal);  
   parameter Real HTC_cold = Q_draw_nominal/(T_stirling_nominal - T_stirling_cold_nominal);
   
   //----------------------------
@@ -173,7 +171,7 @@ Outputs: Evaporator wall temperature,
     //Theoretical (Clausius-Clapeyron), relating to the lowest experimentally known vapour pressure (at 0.49 atm) 
     pv := 49.64925e3*exp(h_lv/R_g*(1/1072. - 1/max(T,1))); //made numerically safe
     
-    //Extrapolating from non-vacuum vapour pressures    
+    //Empirical correlations
     //pv := 10^(4.51961 - 5202.12/T) * 101325.; //source: https://ntrs.nasa.gov/api/citations/19650014783/downloads/19650014783.pdf
     //pv := 10^( 2.46077 - 1873.728/(T - 416.372) ) * 100e3; //source: NIST https://webbook.nist.gov/cgi/inchi?ID=C7440235&Mask=4
   end pv_correlation;
@@ -211,7 +209,7 @@ Outputs: Evaporator wall temperature,
   /*************/
   /*Power throughput limit correlations (flooding limit, viscous limit)*/
   /*************/
-  //Data from Poston et al. (emperical model), Fig. 7
+  //Data from Poston et al. (high-fidelity model), Fig. 7
   function viscous_limit
     input Real T "Sodium temperature [K]"; 
     output Real Q_max "Power limit [W]";
@@ -328,18 +326,19 @@ Outputs: Evaporator wall temperature,
   //----------------------------
   // Model options -- these are not intended to be selectable by the FMU handler, but baked-in at compilation
   //----------------------------
-  parameter Boolean COLD_START = true;
-  //Option to account for heat pipe activation (temp-dependent thermal resistance) or not 
+  //Option to make set a fixed cold initial temperature in the whole heat pipe.
+  parameter Boolean COLD_START = false;
+  //Option to dynamically model the vapour core (giving a temp-dependent thermal resistance) mainly for startup behaviour.
   parameter Boolean MODEL_HP_STARTUP = true;
-  //Option to model the core as a single lump or simply take Q_evap as a boundary condition
+  //Option to model the core as a single lump or simply take Q_evap as a boundary condition (coupling) 
   parameter Boolean MODEL_CORE_INTERNALLY = false; 
-  //Option to model the thermal mass of the Stirling PCS or just take it as a BC on the condenser
-  parameter Boolean MODEL_STIRLING = true; 
-  parameter Boolean MODEL_STIRLING_ACTIVATION = true;
+  //Option to model the thermal mass of the Stirling PCS (whether internally or externally) or just take it as a BC on the condenser 
+  parameter Boolean MODEL_STIRLING = true;   
   //Follow-up option to do so internally or via an external FMU 
-  parameter Boolean MODEL_STIRLING_INTERNALLY = true; //leaving this false with MODEL_STIRLING true can cause the initialisation to fail within OM as T_Stirling defaults to 0
-  
-    
+  parameter Boolean MODEL_STIRLING_INTERNALLY = false; //leaving this false with MODEL_STIRLING true can cause the initialisation to fail within the OM environment as T_Stirling defaults to 0
+  //Option to make the Stirling engine only activate above a set temperature  
+  parameter Boolean MODEL_STIRLING_ACTIVATION = true;
+      
   //----------------------------
   // Latches (flags with persistence)
   //----------------------------
@@ -379,12 +378,6 @@ if COLD_START then
   T_stirling = 15 + 273.15;
 
 else  //change the starting conditions to speed up convergence to steady-state in pseudotransient, full power cases
-  /*
-  T_evap = 1073.15;
-  T_wick = 1073.15;
-  T_vap = 1073.15;
-  T_cond = 1073.15;
-  */
   
   der(T_evap) = 0;
   der(T_wick) = 0;
@@ -395,9 +388,9 @@ else  //change the starting conditions to speed up convergence to steady-state i
     T_cond = T_cond_init_input;
   else    
     //T_cond = T_stirling + R_stirling_hp_interface*Q_draw_nominal; //fix the delta T as per definition of R_stirling_hp_interface
-    T_cond = T_stirling + R_stirling_hp_interface*Q_evap_input; //fix the delta T as per definition of R_stirling_hp_interface
-  end if; 
-  
+    //T_cond = T_stirling + R_stirling_hp_interface*(Q_evap_input/N_HPs); 
+    der(T_cond) = 0;  
+  end if;   
   
   if MODEL_STIRLING_INTERNALLY then     
     der(T_stirling) = 0;  
@@ -406,16 +399,14 @@ else  //change the starting conditions to speed up convergence to steady-state i
   
 end if;
 
-equation
+equation  
   //compute temp-dependent properties
   C_evap_wall = rho_wall * V_wall_e * cp_wall(T_evap);
   C_cond_wall = rho_wall * V_wall_c * cp_wall(T_cond);  
   //C_adiab_wall = rho_wall * V_wall_a * cp_wall(T_evap); //lumped in with evaporator  
-  C_adiab_wall = rho_wall * V_wall_a * cp_wall(T_cond); //lumped in with condenser  
+  //C_adiab_wall = rho_wall * V_wall_a * cp_wall(T_cond); //lumped in with condenser  
+  C_adiab_wall = rho_wall * V_wall_a * cp_wall(T_adiab); //Not lumped in 
   
-  
-
-
   cp_v = cp_v_correlation(T_vap);
   
   //The factor 1.051/sqrt(2) comes from the corrected mean free path accounting for the motion of other particles during the flight of a an average particle
@@ -529,9 +520,13 @@ equation
   // Adiabatic section -> condenser
   Q_ac = (T_adiab - T_cond) / (R_wall_axial_ac); 
   
-  // Condenser->Stirling 
-  Q_cs = max(1E-8,  (T_cond - T_stirling) / R_stirling_hp_interface );  //with thermal resistance according to prescribed nominal DeltaT
-  //Q_cs = max(1E-8,  (T_cond^4 - T_stirling^4) / R_stirling_hp_interface );  //with radiative thermal resistance according to prescribed nominal DeltaT
+  // Condenser->Stirling. 
+  //with thermal resistance according to prescribed nominal DeltaT
+  Q_cs = max(1E-8,  (T_cond - T_stirling) / R_stirling_hp_interface );  
+  //This max() protection is strictly needed to avoid a crash and I'm not sure why. Maybe because Q_internal in the Stirling model is strictly positive. Have not yet checked if the same error happens with the simpler Stirling model  
+  
+  
+  
   
   //----------------------------
   // Energy balances
@@ -594,7 +589,7 @@ equation
     
   end if; 
   
-  //project to the wall surface based on internal resistance
+  //Projection to the wall surface based on internal resistance
   //T_evap_interface = T_evap + R_evap_halfinternal; 
   //add effective contact resistance (will just push T_hp_wall higher on the other side). 
   T_evap_interface = T_evap + R_evap_halfinternal + R_contact_eff; 

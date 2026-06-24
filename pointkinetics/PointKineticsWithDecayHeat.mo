@@ -14,7 +14,7 @@ Outputs: Total thermal power (P_tot), fission power (P_fiss), decay power (P_dec
 
 Notes: If using power history from the 28-h run of KRUSTY, the onset point of the desired transient must
 be provided as a parameter. It does not work with a an 'input' type. Thus if exporting to an FMU, it must be 
-recompiled for each power history case.
+recompiled for each power history case
 
 "
 input Real T_fuel_ref_input;
@@ -30,17 +30,17 @@ input Real rho_max_input;
 input Real T_setpoint_input "desired setpoint for fuel temperature [K]";
 
 //These parameters allow the actual KRUSTY power history to be set. 
-parameter Real t_exp_onset = 0.*3600; //0. //8.*3600 "time at which the transient began during the 28-h run of KRUSTY [s]";
+parameter Real t_exp_onset = 8.*3600; //0. //8.*3600 "time at which the transient began during the 28-h run of KRUSTY [s]";
 parameter Integer nearest_exp_index = findNearestIndex(exp_times, t_exp_onset);
 
 //Values from KRUSTY papers - need to be parameters to be retrievable in Python
 //constant Real Beta = 0.00688; //from Stolte et al, but for COMPONENT-CRITICAL config, not COLD-CRITICAL as needed
-constant Real Beta = 0.00650; //Stated by Grove et al, assumed value taken from Godiva. But consistent with 15-cent and 30-cent studies.
+constant Real Beta = 0.00650; //Stated by Grove et al, value taken from Godiva. But consistent with 15-cent and 30-cent studies as well as TRC correlation.
 parameter Real betas[6] = {0.037, 0.211, 0.187, 0.407, 0.131, 0.027}*Beta; //from Grove et al. (Taken from Godiva!)
 parameter Real lambdas[6] = {0.01273, 0.03175, 0.116, 0.3118, 1.399, 3.876}; //from Grove et al. (Taken from Godiva)!
 constant Real Lambda = 5.20395e-6; //from Stolte et al.
 
-//Values from MOOSE VTB (Serpent outputs)
+//Values from MOOSE VTB (Serpent outputs). These are good kinetic parameters but they don't align with the fuel TRC/reactivity insertion values.
 /*
 constant Real Beta = sum(betas); 
 constant Real betas[6] = {23.06, 118.77, 115.32, 324.70, 96.07, 33.82}*1e-5;
@@ -442,13 +442,19 @@ final constant Real exp_powers[138] = {
 0
 } "linearised experimental data, powers [W]";
 
-/*
+/* //old attempt to do things on-the-fly
 Real[nearest_exp_index] fissionpower_history = Modelica.Math.Vectors.reverse(exp_powers[1:nearest_exp_index]);
 Real[nearest_exp_index] time_history = { exp_times[nearest_exp_index] - t for t in Modelica.Math.Vectors.reverse(exp_times[1:nearest_exp_index])} ;
 */
 
+/* //test with the index corresponding to 8h
 parameter Real fissionpower_history[28] = Modelica.Math.Vectors.reverse(exp_powers[1:28]);
 parameter Real time_history[28] = { exp_times[28] - t for t in Modelica.Math.Vectors.reverse(exp_times[1:28])} ;
+*/
+
+parameter Real fissionpower_history[nearest_exp_index] = Modelica.Math.Vectors.reverse(exp_powers[1:nearest_exp_index]);
+parameter Real time_history[nearest_exp_index] = { exp_times[nearest_exp_index] - t for t in Modelica.Math.Vectors.reverse(exp_times[1:nearest_exp_index])} ;
+
 
 /*
   This correlation gives the integral reactivity feedback (relative to *operating* (nominal) temp).
@@ -582,7 +588,7 @@ Real K_p;
 Real K_i;
 Boolean PI_active(start=false, fixed=true);
 Real ctrl_out ;
-Real ctrl_error ;
+Real ctrl_error (start = 0, fixed = false);
 Real ctrl_error_integral(start=0, fixed=true);
 
 Boolean TEMP_SET_REACHED(start=false, fixed=true);
@@ -596,9 +602,10 @@ during simulation (not allowed by Modelica). Normally, an FMU should allow the p
 that this doesn't work with OpenModelica. The solution is then to recompile an FMU for each power history case. 
 */
 
-if t_exp_onset > 0 then
+if t_exp_onset > 1.0 then
   (Cs, Hs) = computeICsFromPowerHistory(time_history, fissionpower_history, lambdas, betas, Lambda, lambdas_dh, E_fracs);   
-  P_fiss = exp_powers[nearest_exp_index]; //The fission power has to match the chosen point in the history
+  P_fiss = exp_powers[nearest_exp_index]; //The fission power should match the chosen point in the history
+  //der(P_fiss) = 0; //This gives a smoother start even if the fission power only matches approximately (still very close in all test cases)
  
 else //take a negative parameter input as implying infinite power history
   betas/Lambda*P_fiss = lambdas.*Cs;
@@ -639,7 +646,7 @@ end if;
 if P_setpoint_input > 1E-9 then 
   P_setpoint = P_setpoint_input;
 else
-  P_setpoint = 3000;
+  P_setpoint = 5000;
 end if;
 
 if T_setpoint_input > 1E-9 then 
@@ -663,8 +670,19 @@ else
   K_i = 0.;//K_p/100.; //Integral gain
 end if; 
 
-ctrl_error = if PI_active then (P_setpoint - P_fiss) else 0; //Not sure whether to use P_tot or P_fiss for reactivity control 
-der(ctrl_error_integral) = if PI_active then ctrl_error else 0; 
+
+if PI_active then 
+  ctrl_error = P_setpoint - P_fiss;//Use P_fiss for reactivity control since this is what was measured in KRUSTY. 
+  der(ctrl_error_integral) = ctrl_error; 
+else
+  ctrl_error = 0;
+  der(ctrl_error_integral) = 0; 
+end if; 
+
+//ctrl_error = if PI_active then (P_setpoint - P_fiss) else 0; //Use P_fiss for reactivity control since this is what was measured in KRUSTY. 
+//der(ctrl_error_integral) = if PI_active then ctrl_error else 0; 
+
+
 //der(ctrl_error_integral) = if PI_active and T_fuel_outer - T_setpoint < 5.0 then ctrl_error else 0; //stop integrating the error
 
 ctrl_out = K_p*ctrl_error + K_i*ctrl_error_integral; 
@@ -672,7 +690,7 @@ ctrl_out = K_p*ctrl_error + K_i*ctrl_error_integral;
 P_max = max(P_max, P_fiss); //update the maximum power yet reached
 
 //For running the FMU, need to have a tolerance for these 'less than' conditions since they may otherwise be triggered prematurely.
-when (not pre(PI_active)) and (P_fiss - P_setpoint < -10) and (P_fiss - P_max < -10) then 
+when (not pre(PI_active)) and (P_fiss < P_setpoint - 10) and (P_fiss < P_max - 10) then 
       PI_active = true; //only activate when not previously set and falls below the setpoint and is below the previous max      
       Modelica.Utilities.Streams.print("ACTIVATED PI CTRL");
       Modelica.Utilities.Streams.print("time: " + String(time));
@@ -682,7 +700,7 @@ when (not pre(PI_active)) and (P_fiss - P_setpoint < -10) and (P_fiss - P_max < 
       Modelica.Utilities.Streams.print("P_max: " + String(P_max));
 end when; 
 
-when (not pre(TEMP_SET_REACHED)) and (T_fuel_outer - T_setpoint > 0.01) then
+when (not pre(TEMP_SET_REACHED)) and (T_fuel_outer > T_setpoint + 0.1) then
   TEMP_SET_REACHED = true; //only activate when not previously set and the temperature rises above the setpoint
   rho_ext_Tset = rho_ext;
   Modelica.Utilities.Streams.print("SET NEW MAX REACTIVITY");
@@ -706,8 +724,8 @@ rho = rho_0 + rho_ext + rho_fb;
 
 der(P_fiss) = (rho - Beta)/Lambda.*P_fiss + sum(lambdas.*Cs);
 der(Cs) = betas/Lambda*P_fiss - lambdas.*Cs;
-
 der(Hs) = E_fracs*P_fiss - lambdas_dh.*Hs;
+
 P_dec = sum(lambdas_dh.*Hs);
 P_tot = P_fiss + P_dec;
 

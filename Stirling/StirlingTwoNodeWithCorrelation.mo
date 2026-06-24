@@ -1,7 +1,7 @@
 /*
 A two-node Stirling engine thermal mass model with the FTB correlation used to get the heat transfer between hot/cold nodes. 
 
-Inputs: Heat transfer rate from heat pipe condenser (Q_cs_input)
+Inputs: Heat transfer rate from heat pipe condenser (Q_cs_input), heat transfr boundary condition on cold side
 Outputs: Hot-side Stirling temperature (T_s, cold-side heat rejection, electric power).  
 */
 model StirlingTwoNodeWithCorrelation
@@ -16,6 +16,9 @@ parameter Real C_stirling_c = 1.*C_stirling_onenode;
 //parameter Real C_stirling_h = 1.5*C_stirling_onenode; 
 //parameter Real C_stirling_c = 1.5*C_stirling_onenode; 
 
+//What about setting 1.5x on the hot side and 0.5x on the cold side?
+//  -when the engine is off, it will give better startup results
+//  -when the engine is on, it will have the same total capacitance, which may preserve the good load following results (?)
 
 //parameter Real T_stirling_activation = 650 + 273.15 "Temperature at which Stirlings are turned on in start-up run of KRUSTY"; 
 parameter Real T_stirling_activation = 950 "Temperature at which Stirlings are turned on in start-up run of KRUSTY"; 
@@ -32,16 +35,16 @@ input Real Q_draw_nominal_input;
 output Real T_s(start = T_stirling_nominal, fixed=false) "Stirling hot side (acceptor) temperature [K]"; 
 Real T_sc (start = T_stirling_cold_nominal, fixed=false) "Stirling cold side temperature [K]";
 
-
 Real Q_cs "instantaneous heat transfer rate from the heat pipe condenser to the Stirling engine [W]";
 Real Q_internal "instantaneous internal heat transfer from hot to cold sides ('throughput') [W]";
-Real Q_bc "instantaneous heat transfer from the Stirling engine to the cold sink"; 
+Real Q_ss "instantaneous heat transfer from the Stirling engine to the cold sink"; 
 
 Real Q_draw_nominal "nominal power draw [W]";
 output Real Q_rejected_th "thermal power rejected [W]";
 output Real Q_electric "electric power generated [W]";
 
-parameter Boolean MODEL_STIRLING_ACTIVATION = true "Require the Stirling engine to reach a setpoint temperature before drawing heat";
+parameter Boolean MODEL_STIRLING_ACTIVATION = false "Require the Stirling engine to reach a setpoint temperature before drawing heat";
+parameter Boolean FIX_CONDENSER_HEATFLUX = false;
 
 Boolean STIRLING_ACTIVATED (start = false, fixed=true); //activated with 'when' statement
 
@@ -74,10 +77,12 @@ if COLD_START then
 else 
   if T_s_init_input > 1E-9 then 
     T_s = T_s_init_input;
-    T_sc = T_s_init_input;
+    //T_sc = T_stirling_cold_nominal;
+    der(T_sc) = 0;
   else     
     der(T_s) = 0.;
     der(T_sc) = 0.;
+    
   end if; 
 end if;   
 
@@ -87,12 +92,12 @@ equation
 if Q_draw_nominal_input > 1E-9 then 
   Q_draw_nominal = Q_draw_nominal_input;
 else 
-  Q_draw_nominal = 2350/8;
+  Q_draw_nominal = 2250/8;  
 end if; 
 
 //Compute correction factor to give the correct power draw at nominal T_h, T_c
-eta_nominal = (0.25 + eta_Th_coeff*(T_stirling_nominal-T_h_min))*(0.35 + (eta_Tc_coeff*(T_stirling_cold_nominal - T_c_min)))/0.35;
-Q_corr_nominal = ( (52 + Q_Th_coeff*(T_stirling_nominal-T_h_min))*( 86 + (Q_Tc_coeff*(T_stirling_cold_nominal-T_c_min)) )/86 )/eta_nominal;
+eta_nominal = (0.25 + eta_Th_coeff*(T_stirling_nominal - T_h_min))*(0.35 + (eta_Tc_coeff*(T_stirling_cold_nominal - T_c_min)))/0.35;
+Q_corr_nominal = ( (52 + Q_Th_coeff*(T_stirling_nominal - T_h_min))*( 86 + (Q_Tc_coeff*(T_stirling_cold_nominal - T_c_min)) )/86 )/eta_nominal;
 cf = Q_draw_nominal/Q_corr_nominal; 
 
 //Compute HTC for cold side -> Give the correct T_sc at steady-state with presumed cooler/sink temperature
@@ -110,41 +115,43 @@ else
 end if; 
 
 //Heat flows
-if Q_cs_input > 1E-9 then 
-  Q_cs = Q_cs_input;
+if FIX_CONDENSER_HEATFLUX then
+  Q_cs = Q_draw_nominal;  
 else 
-  Q_cs = Q_draw_nominal;
+  Q_cs = Q_cs_input;
 end if;
 
 
-eta =  max( 0.15,(0.25 + eta_Th_coeff*(T_s-T_h_min)) )*( max( 0.15, 0.35 + (eta_Tc_coeff*(T_stirling_cold_nominal - T_c_min)) )/0.35);
+eta =  max( 0.15,(0.25 + eta_Th_coeff*(T_s-T_h_min)) )*( max( 0.15, 0.35 + (eta_Tc_coeff*(T_sc - T_c_min)) )/0.35);
+//eta =  max( 0.15,(0.25 + eta_Th_coeff*(T_s-T_h_min)) )*( max( 0.15, 0.35 + (eta_Tc_coeff*(T_stirling_cold_nominal - T_c_min)) )/0.35);
+
 //eta = 0.325; 
 
-if Q_bc_input > 1E-9 then //override
+if Q_bc_input > 1E-9 then //override internal heat transfer calculation 
   Q_internal = Q_bc_input;
 else
   if MODEL_STIRLING_ACTIVATION then 
-    if STIRLING_ACTIVATED then 
-      //Q_bc = HTC_cold*(T_s - T_stirling_cold_nominal);
-      //Now use the correlation 
-      //Q_bc = ( (52 + Q_Th_coeff*(T_s-T_h_min))*( 1 + (Q_Tc_coeff*(T_stirling_cold_nominal-T_c_min))/86 ) )/eta;       
-      Q_internal = max(0, cf*( ( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_stirling_cold_nominal-T_c_min)) )/86 )/eta ) );       
+    if STIRLING_ACTIVATED then       
+      //Now use the correlation with correction       
+       Q_internal = max(0, cf*( max(0, 52+Q_Th_coeff*(T_s-T_h_min)) * max(0, 86+Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta );
+      //Q_internal = max(0, cf*( ( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_sc - T_c_min)) )/86 )/eta ) );             
+      //Q_internal = max(0, cf*( ( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_stirling_cold_nominal - T_c_min)) )/86 )/eta ) );             
     else
       Q_internal = 0;
     end if;
-  else 
-    //Q_bc = HTC_cold*(T_s - T_stirling_cold_nominal); 
-    Q_internal = max(0, cf* (( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_stirling_cold_nominal-T_c_min)) )/86 )/eta ) );       
+  else     
+     Q_internal = max(0, cf*( max(0, 52 + Q_Th_coeff*(T_s-T_h_min)) * max(0, 86 + Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta );
+    //Q_internal = max(0, cf* (( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_sc-T_c_min)) )/86 )/eta ) );       
+    //Q_internal = max(0, cf* (( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_stirling_cold_nominal-T_c_min)) )/86 )/eta ) );       
     
   end if; 
 end if;
 
-Q_bc = HTC_cold*(T_sc - T_sink); 
+Q_ss = HTC_cold*(T_sc - T_sink); 
 
 //Energy balance
-//C_stirling*der(T_s) = Q_cs - Q_bc;
 C_stirling_h*der(T_s) = Q_cs - Q_internal;
-C_stirling_c*der(T_sc) = Q_internal - Q_bc;
+C_stirling_c*der(T_sc) = Q_internal - Q_ss;
 
 //other outputs
 Q_electric = eta*Q_internal;

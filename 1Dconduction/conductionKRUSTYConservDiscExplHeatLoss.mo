@@ -107,8 +107,8 @@ model conductionKRUSTYConservDiscExplHeatLoss
   parameter Real HTC_loss = Q_loss_nominal/(T_outer_layer_nominal^4 - T_ambient^4) "tuned HTC that gives the nominal heat loss [W/K]";
   parameter Real outer_wall_area = 2*pi*r_face[N+1]*L;
   Real Q_outerwall_out;
-  //Determine what nominal nuclear heating (fission + decay power) is needed to get the final effective thermal power that we expect at nominal conditions [2350 W after heat losses]
-  parameter Real P_total_nom = (2350 + Q_loss_nominal)/recoverable_power_fraction "Nominal power from fission and decay [W]";
+  //Determine what nominal nuclear heating (fission + decay power) is needed to get the final effective thermal power that we expect at nominal conditions [2250 W after heat losses]
+  parameter Real P_total_nom = (2250 + Q_loss_nominal)/recoverable_power_fraction "Nominal power from fission and decay [W]";
   
   parameter Real dt_lag = 10.0 "frequency with which to update the conductivity within a given call to this Modelica model/FMU";    
   Real k_mean "mean conductivity, to ensure it's updating correctly";
