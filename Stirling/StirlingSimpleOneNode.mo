@@ -25,7 +25,7 @@ Real Q_cs "instantaneous heat transfer rate from the heat pipe condenser to the 
 Real Q_bc "instantaneous heat transfer from the Stirling engine to the cold sink"; 
 
 Real Q_draw_nominal "nominal power draw [W]";
-Real HTC_cold;
+Real HTC;
 
 parameter Boolean MODEL_STIRLING_ACTIVATION = false "Require the Stirling engine to reach a setpoint temperature before drawing heat";
 
@@ -52,10 +52,10 @@ equation
 if Q_draw_nominal_input > 1E-9 then 
   Q_draw_nominal = Q_draw_nominal_input;
 else 
-  Q_draw_nominal = 2350/8;
+  Q_draw_nominal = 2250/8;
 end if; 
 
-HTC_cold = Q_draw_nominal/(T_stirling_nominal - T_stirling_cold_nominal);
+HTC = Q_draw_nominal/(T_stirling_nominal - T_stirling_cold_nominal);
 
 if MODEL_STIRLING_ACTIVATION then 
   when T_s > T_stirling_activation then 
@@ -78,12 +78,12 @@ if Q_bc_input > 1E-9 then //override
 else
   if MODEL_STIRLING_ACTIVATION then 
     if STIRLING_ACTIVATED then 
-      Q_bc = HTC_cold*(T_s - T_stirling_cold_nominal);
+      Q_bc = HTC*(T_s - T_stirling_cold_nominal);
     else
       Q_bc = 0;
     end if;
   else 
-    Q_bc = HTC_cold*(T_s - T_stirling_cold_nominal); 
+    Q_bc = HTC*(T_s - T_stirling_cold_nominal); 
   end if; 
 end if;
 

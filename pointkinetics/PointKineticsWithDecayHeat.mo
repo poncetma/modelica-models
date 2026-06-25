@@ -14,7 +14,8 @@ Outputs: Total thermal power (P_tot), fission power (P_fiss), decay power (P_dec
 
 Notes: If using power history from the 28-h run of KRUSTY, the onset point of the desired transient must
 be provided as a parameter. It does not work with a an 'input' type. Thus if exporting to an FMU, it must be 
-recompiled for each power history case
+recompiled for each power history case. Furthermore, if it is desired not to use power history (i.e. t_exp_onset=0),
+the part where fissionpower_history and time_history are defined should be commented out to avoid a compilation error. 
 
 "
 input Real T_fuel_ref_input;
@@ -30,7 +31,7 @@ input Real rho_max_input;
 input Real T_setpoint_input "desired setpoint for fuel temperature [K]";
 
 //These parameters allow the actual KRUSTY power history to be set. 
-parameter Real t_exp_onset = 8.*3600; //0. //8.*3600 "time at which the transient began during the 28-h run of KRUSTY [s]";
+parameter Real t_exp_onset = 12.*3600; //0. //8.*3600 "time at which the transient began during the 28-h run of KRUSTY [s]";
 parameter Integer nearest_exp_index = findNearestIndex(exp_times, t_exp_onset);
 
 //Values from KRUSTY papers - need to be parameters to be retrievable in Python

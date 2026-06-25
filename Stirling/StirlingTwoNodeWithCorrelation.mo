@@ -30,7 +30,7 @@ input Boolean COLD_START;
 input Real Q_cs_input "incoming heat transfer rate from the heat pipe condenser [W]";
 input Real Q_bc_input "desired boundary condition, here applied to internal heat throughput (Q_internal) [W]";
 input Real T_s_init_input; 
-input Real Q_draw_nominal_input; 
+input Real Q_draw_nominal_fullpower_input; 
 
 output Real T_s(start = T_stirling_nominal, fixed=false) "Stirling hot side (acceptor) temperature [K]"; 
 Real T_sc (start = T_stirling_cold_nominal, fixed=false) "Stirling cold side temperature [K]";
@@ -39,7 +39,7 @@ Real Q_cs "instantaneous heat transfer rate from the heat pipe condenser to the 
 Real Q_internal "instantaneous internal heat transfer from hot to cold sides ('throughput') [W]";
 Real Q_ss "instantaneous heat transfer from the Stirling engine to the cold sink"; 
 
-Real Q_draw_nominal "nominal power draw [W]";
+Real Q_draw_nominal_fullpower "nominal power draw [W]";
 output Real Q_rejected_th "thermal power rejected [W]";
 output Real Q_electric "electric power generated [W]";
 
@@ -89,20 +89,20 @@ end if;
 
 equation
 
-if Q_draw_nominal_input > 1E-9 then 
-  Q_draw_nominal = Q_draw_nominal_input;
+if Q_draw_nominal_fullpower_input > 1E-9 then 
+  Q_draw_nominal_fullpower = Q_draw_nominal_fullpower_input;
 else 
-  Q_draw_nominal = 2250/8;  
+  Q_draw_nominal_fullpower = 2250/8;    
 end if; 
 
 //Compute correction factor to give the correct power draw at nominal T_h, T_c
 eta_nominal = (0.25 + eta_Th_coeff*(T_stirling_nominal - T_h_min))*(0.35 + (eta_Tc_coeff*(T_stirling_cold_nominal - T_c_min)))/0.35;
 Q_corr_nominal = ( (52 + Q_Th_coeff*(T_stirling_nominal - T_h_min))*( 86 + (Q_Tc_coeff*(T_stirling_cold_nominal - T_c_min)) )/86 )/eta_nominal;
-cf = Q_draw_nominal/Q_corr_nominal; 
+cf = Q_draw_nominal_fullpower/Q_corr_nominal; //The correction factor should be based on the "true" nominal full power, not whichever Q_draw is expected for the conditions at hand. 
 
 //Compute HTC for cold side -> Give the correct T_sc at steady-state with presumed cooler/sink temperature
-//HTC_cold = (Q_draw_nominal*(1-eta_nominal))/(T_stirling_cold_nominal - T_sink);
-HTC_cold = (Q_draw_nominal)/(T_stirling_cold_nominal - T_sink);
+//HTC_cold = (Q_draw_nominal_fullpower*(1-eta_nominal))/(T_stirling_cold_nominal - T_sink);
+HTC_cold = (Q_draw_nominal_fullpower)/(T_stirling_cold_nominal - T_sink);
 
 
 if MODEL_STIRLING_ACTIVATION then 
@@ -116,7 +116,7 @@ end if;
 
 //Heat flows
 if FIX_CONDENSER_HEATFLUX then
-  Q_cs = Q_draw_nominal;  
+  Q_cs = Q_draw_nominal_fullpower;  
 else 
   Q_cs = Q_cs_input;
 end if;
@@ -133,14 +133,16 @@ else
   if MODEL_STIRLING_ACTIVATION then 
     if STIRLING_ACTIVATED then       
       //Now use the correlation with correction       
-       Q_internal = max(0, cf*( max(0, 52+Q_Th_coeff*(T_s-T_h_min)) * max(0, 86+Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta );
+      Q_internal = cf*( (52+Q_Th_coeff*(T_s-T_h_min)) * (86+Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta;
+      //Q_internal = cf*( max(0, 52+Q_Th_coeff*(T_s-T_h_min)) * max(0, 86+Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta;
       //Q_internal = max(0, cf*( ( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_sc - T_c_min)) )/86 )/eta ) );             
       //Q_internal = max(0, cf*( ( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_stirling_cold_nominal - T_c_min)) )/86 )/eta ) );             
     else
       Q_internal = 0;
     end if;
   else     
-     Q_internal = max(0, cf*( max(0, 52 + Q_Th_coeff*(T_s-T_h_min)) * max(0, 86 + Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta );
+    Q_internal = cf*( (52 + Q_Th_coeff*(T_s-T_h_min)) * (86 + Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta;
+    //Q_internal = cf*( max(0, 52 + Q_Th_coeff*(T_s-T_h_min)) * max(0, 86 + Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta;
     //Q_internal = max(0, cf* (( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_sc-T_c_min)) )/86 )/eta ) );       
     //Q_internal = max(0, cf* (( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_stirling_cold_nominal-T_c_min)) )/86 )/eta ) );       
     
