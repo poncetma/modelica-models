@@ -386,9 +386,8 @@ else  //change the starting conditions to speed up convergence to steady-state i
   
   if T_cond_init_input > 1E-9 then 
     T_cond = T_cond_init_input;
-  else    
-    //T_cond = T_stirling + R_stirling_hp_interface*Q_draw_nominal; //fix the delta T as per definition of R_stirling_hp_interface
-    //T_cond = T_stirling + R_stirling_hp_interface*(Q_evap_input/N_HPs); 
+  else        
+    //T_cond = T_stirling + R_stirling_hp_interface*(Q_evap_input/N_HPs); //fix the delta T as per definition of R_stirling_hp_interface
     der(T_cond) = 0;  
   end if;   
   

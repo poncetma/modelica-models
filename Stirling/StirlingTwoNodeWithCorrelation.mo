@@ -44,7 +44,7 @@ output Real Q_rejected_th "thermal power rejected [W]";
 output Real Q_electric "electric power generated [W]";
 
 parameter Boolean MODEL_STIRLING_ACTIVATION = false "Require the Stirling engine to reach a setpoint temperature before drawing heat";
-parameter Boolean FIX_CONDENSER_HEATFLUX = false;
+parameter Boolean FIX_CONDENSER_HEATFLUX = true;
 
 Boolean STIRLING_ACTIVATED (start = false, fixed=true); //activated with 'when' statement
 
@@ -116,7 +116,7 @@ end if;
 
 //Heat flows
 if FIX_CONDENSER_HEATFLUX then
-  Q_cs = Q_draw_nominal_fullpower;  
+  Q_cs = 2187/8;  
 else 
   Q_cs = Q_cs_input;
 end if;
@@ -124,9 +124,9 @@ end if;
 
 eta =  max( 0.15,(0.25 + eta_Th_coeff*(T_s-T_h_min)) )*( max( 0.15, 0.35 + (eta_Tc_coeff*(T_sc - T_c_min)) )/0.35);
 //eta =  max( 0.15,(0.25 + eta_Th_coeff*(T_s-T_h_min)) )*( max( 0.15, 0.35 + (eta_Tc_coeff*(T_stirling_cold_nominal - T_c_min)) )/0.35);
-
 //eta = 0.325; 
 
+/*
 if Q_bc_input > 1E-9 then //override internal heat transfer calculation 
   Q_internal = Q_bc_input;
 else
@@ -148,8 +148,33 @@ else
     
   end if; 
 end if;
+*/
 
-Q_ss = HTC_cold*(T_sc - T_sink); 
+if MODEL_STIRLING_ACTIVATION then 
+   if STIRLING_ACTIVATED then       
+      //Now use the correlation with correction       
+      Q_internal = cf*( (52+Q_Th_coeff*(T_s-T_h_min)) * (86+Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta;
+      //Q_internal = cf*( max(0, 52+Q_Th_coeff*(T_s-T_h_min)) * max(0, 86+Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta;
+      //Q_internal = max(0, cf*( ( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_sc - T_c_min)) )/86 )/eta ) );             
+      //Q_internal = max(0, cf*( ( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_stirling_cold_nominal - T_c_min)) )/86 )/eta ) );             
+    else
+      Q_internal = 0;
+    end if;
+  else     
+    Q_internal = cf*( (52 + Q_Th_coeff*(T_s-T_h_min)) * (86 + Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta;
+    //Q_internal = cf*( max(0, 52 + Q_Th_coeff*(T_s-T_h_min)) * max(0, 86 + Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta;
+    //Q_internal = max(0, cf* (( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_sc-T_c_min)) )/86 )/eta ) );       
+    //Q_internal = max(0, cf* (( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_stirling_cold_nominal-T_c_min)) )/86 )/eta ) );       
+    
+end if; 
+
+if Q_bc_input > 1E-9 then //override the boundary condition on the cold side 
+  Q_ss = Q_bc_input; 
+else 
+  Q_ss = HTC_cold*(T_sc - T_sink);
+end if;
+
+//Q_ss = HTC_cold*(T_sc - T_sink); 
 
 //Energy balance
 C_stirling_h*der(T_s) = Q_cs - Q_internal;
