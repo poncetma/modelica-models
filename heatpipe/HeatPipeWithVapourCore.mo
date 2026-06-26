@@ -133,11 +133,12 @@ Outputs: Evaporator wall temperature,
   parameter Real T_stirling_cold_nominal  = 65 + 273.15; 
   
   /*The below parameters don't need to be computed based on the number of heat pipes as we can assume each heat pipe has its own nominal power draw equal to 2250/8 */
-  parameter Real Q_draw_nominal = 2250/8 "nominal power draw [W]";
-  parameter Real R_stirling_hp_interface = ( (T_stirling_nominal + 145) - T_stirling_nominal )/Q_draw_nominal;     
-  parameter Real T_cond_nominal = T_stirling_nominal + Q_draw_nominal*R_stirling_hp_interface;   
-  parameter Real HTC = Q_draw_nominal/(T_cond_nominal - T_stirling_nominal);  
-  parameter Real HTC_cold = Q_draw_nominal/(T_stirling_nominal - T_stirling_cold_nominal);
+  input Real Q_draw_nominal_fullpower_input; 
+  Real Q_draw_nominal_fullpower "Expected power draw at full power [W]";
+  Real R_stirling_hp_interface "Thermal resistance between heat pipe condenser and Stirling hot-end [K/W]";     
+  Real T_cond_nominal;   
+  Real HTC;  
+  Real HTC_cold; 
   
   //----------------------------
   // Helper correlation functions
@@ -399,6 +400,19 @@ else  //change the starting conditions to speed up convergence to steady-state i
 end if;
 
 equation  
+  //adjust full-power state
+  if Q_draw_nominal_fullpower_input > 1E-9 then
+    Q_draw_nominal_fullpower = Q_draw_nominal_fullpower_input;
+  else 
+    Q_draw_nominal_fullpower = 2250/8;
+  end if;
+  R_stirling_hp_interface = ( (T_stirling_nominal + 145) - T_stirling_nominal )/Q_draw_nominal_fullpower;     
+  T_cond_nominal = T_stirling_nominal + Q_draw_nominal_fullpower*R_stirling_hp_interface;   
+  HTC = Q_draw_nominal_fullpower/(T_cond_nominal - T_stirling_nominal);  
+  HTC_cold = Q_draw_nominal_fullpower/(T_stirling_nominal - T_stirling_cold_nominal); 
+
+
+
   //compute temp-dependent properties
   C_evap_wall = rho_wall * V_wall_e * cp_wall(T_evap);
   C_cond_wall = rho_wall * V_wall_c * cp_wall(T_cond);  

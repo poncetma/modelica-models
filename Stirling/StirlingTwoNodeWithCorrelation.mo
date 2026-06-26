@@ -44,7 +44,7 @@ output Real Q_rejected_th "thermal power rejected [W]";
 output Real Q_electric "electric power generated [W]";
 
 parameter Boolean MODEL_STIRLING_ACTIVATION = false "Require the Stirling engine to reach a setpoint temperature before drawing heat";
-parameter Boolean FIX_CONDENSER_HEATFLUX = true;
+parameter Boolean FIX_CONDENSER_HEATFLUX = false;
 
 Boolean STIRLING_ACTIVATED (start = false, fixed=true); //activated with 'when' statement
 
@@ -101,7 +101,6 @@ Q_corr_nominal = ( (52 + Q_Th_coeff*(T_stirling_nominal - T_h_min))*( 86 + (Q_Tc
 cf = Q_draw_nominal_fullpower/Q_corr_nominal; //The correction factor should be based on the "true" nominal full power, not whichever Q_draw is expected for the conditions at hand. 
 
 //Compute HTC for cold side -> Give the correct T_sc at steady-state with presumed cooler/sink temperature
-//HTC_cold = (Q_draw_nominal_fullpower*(1-eta_nominal))/(T_stirling_cold_nominal - T_sink);
 HTC_cold = (Q_draw_nominal_fullpower)/(T_stirling_cold_nominal - T_sink);
 
 
