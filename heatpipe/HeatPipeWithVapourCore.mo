@@ -535,12 +535,11 @@ equation
   
   // Condenser->Stirling. 
   //with thermal resistance according to prescribed nominal DeltaT
-  Q_cs = max(1E-8,  (T_cond - T_stirling) / R_stirling_hp_interface );  
-  //This max() protection is strictly needed to avoid a crash and I'm not sure why. Maybe because Q_internal in the Stirling model is strictly positive. Have not yet checked if the same error happens with the simpler Stirling model  
+  //Q_cs = max(1E-8,  (T_cond - T_stirling) / R_stirling_hp_interface );  
+  //This max() protection was strictly needed at one point to avoid a crash. Perhaps because Q_internal was strictly positive.   
+  Q_cs = (T_cond - T_stirling) / R_stirling_hp_interface ;  
   
-  
-  
-  
+   
   //----------------------------
   // Energy balances
   //----------------------------

@@ -10,7 +10,7 @@ parameter Real C_adiabcond_wall = 17.780965 "Heat pipe adiabatic + condenser wal
 parameter Real C_stirling_onenode = 15*C_adiabcond_wall "Stirling capacitance [J/K]"; 
 //Both hot and cold sides have thermal masses, but note that the hot-side one is the one that really matters for the system start-up and it has a greater impact on the power throughput.
 parameter Real C_stirling_h = 1.*C_stirling_onenode;
-parameter Real C_stirling_c = 1.*C_stirling_onenode;
+parameter Real C_stirling_c = 0.5*C_stirling_onenode;
 //1.5x seems to work better for startup transient but makes the load rejection response worse.
 //So the reason for the greater lag in Stirling temperature rise is probably more to do with intermediate heat losses than with the heat capacity. 
 //parameter Real C_stirling_h = 1.5*C_stirling_onenode; 
@@ -124,30 +124,6 @@ end if;
 eta =  max( 0.15,(0.25 + eta_Th_coeff*(T_s-T_h_min)) )*( max( 0.15, 0.35 + (eta_Tc_coeff*(T_sc - T_c_min)) )/0.35);
 //eta =  max( 0.15,(0.25 + eta_Th_coeff*(T_s-T_h_min)) )*( max( 0.15, 0.35 + (eta_Tc_coeff*(T_stirling_cold_nominal - T_c_min)) )/0.35);
 //eta = 0.325; 
-
-/*
-if Q_bc_input > 1E-9 then //override internal heat transfer calculation 
-  Q_internal = Q_bc_input;
-else
-  if MODEL_STIRLING_ACTIVATION then 
-    if STIRLING_ACTIVATED then       
-      //Now use the correlation with correction       
-      Q_internal = cf*( (52+Q_Th_coeff*(T_s-T_h_min)) * (86+Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta;
-      //Q_internal = cf*( max(0, 52+Q_Th_coeff*(T_s-T_h_min)) * max(0, 86+Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta;
-      //Q_internal = max(0, cf*( ( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_sc - T_c_min)) )/86 )/eta ) );             
-      //Q_internal = max(0, cf*( ( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_stirling_cold_nominal - T_c_min)) )/86 )/eta ) );             
-    else
-      Q_internal = 0;
-    end if;
-  else     
-    Q_internal = cf*( (52 + Q_Th_coeff*(T_s-T_h_min)) * (86 + Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta;
-    //Q_internal = cf*( max(0, 52 + Q_Th_coeff*(T_s-T_h_min)) * max(0, 86 + Q_Tc_coeff*(T_sc-T_c_min)) /86 )/eta;
-    //Q_internal = max(0, cf* (( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_sc-T_c_min)) )/86 )/eta ) );       
-    //Q_internal = max(0, cf* (( (52 + Q_Th_coeff*(T_s-T_h_min))*( 86 + (Q_Tc_coeff*(T_stirling_cold_nominal-T_c_min)) )/86 )/eta ) );       
-    
-  end if; 
-end if;
-*/
 
 if MODEL_STIRLING_ACTIVATION then 
    if STIRLING_ACTIVATED then       
